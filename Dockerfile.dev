@@ -1,0 +1,16 @@
+FROM rust:1.85-alpine3.21 AS builder
+WORKDIR /app
+RUN apk add --no-cache build-base musl-dev
+
+COPY . .
+RUN cargo build -p ownfoil-rs --release --locked && \
+    strip /app/target/release/ownfoil-rs
+
+FROM alpine:3.21
+RUN addgroup -S app && adduser -S app -G app
+
+COPY --from=builder /app/target/release/ownfoil-rs /usr/local/bin/ownfoil-rs
+USER app
+WORKDIR /home/app
+
+ENTRYPOINT ["/usr/local/bin/ownfoil-rs"]

@@ -1,0 +1,6 @@
+/target/
+/auth.toml
+/ownfoil-rs/auth.toml
+/.env
+/ownfoil/
+/CyberFoil/

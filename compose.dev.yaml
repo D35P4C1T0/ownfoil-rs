@@ -1,0 +1,22 @@
+services:
+  ownfoil-rs:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    env_file:
+      - .env
+    ports:
+      - "${OWNFOIL_PORT:-8465}:8465"
+    volumes:
+      - "${AUTH_FILE:-./ownfoil-rs/auth.toml}:/config/auth.toml:ro"
+      - "${LIBRARY_FOLDER:-/home/matteo/Documents/switch_games}:/library:ro"
+    command:
+      - "--bind"
+      - "0.0.0.0:8465"
+      - "--library-folder"
+      - "/library"
+      - "--auth-file"
+      - "/config/auth.toml"
+      - "--scan-interval-seconds"
+      - "${SCAN_INTERVAL_SECONDS:-30}"
+    restart: "no"
