@@ -1,0 +1,10 @@
+# Example credentials file for HTTP Basic auth.
+# Keep your real credentials in auth.toml (gitignored).
+
+username = "admin"
+password = "change-me"
+
+[[users]]
+username = "friend"
+password = "friend-pass"
+
