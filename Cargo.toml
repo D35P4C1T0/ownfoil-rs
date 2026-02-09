@@ -1,0 +1,3 @@
+[workspace]
+members = ["ownfoil-rs"]
+resolver = "2"
