@@ -1,8 +1,38 @@
+//! HTTP Basic auth credentials loaded from a TOML file.
+//!
+//! ## Auth file format
+//!
+//! The auth file supports two styles:
+//!
+//! **Single user (flat):**
+//! ```toml
+//! username = "admin"
+//! password = "secret"
+//! ```
+//!
+//! **Multiple users (array):**
+//! ```toml
+//! [[users]]
+//! username = "alice"
+//! password = "pw1"
+//!
+//! [[users]]
+//! username = "bob"
+//! password = "pw2"
+//! ```
+//!
+//! Both can be combined; the single `username`/`password` pair is merged with `[[users]]`.
+//! Duplicate usernames are deduplicated (last wins). Empty usernames or passwords are skipped.
+//!
+//! **Security:** Use `chmod 600` on the auth file. The server warns if it is world-readable (Unix).
+
 use std::collections::BTreeMap;
 use std::path::Path;
 
 use serde::Deserialize;
+use subtle::ConstantTimeEq;
 use thiserror::Error;
+use tracing::warn;
 
 #[derive(Debug, Clone)]
 pub struct AuthSettings {
@@ -34,10 +64,15 @@ impl AuthSettings {
     }
 
     pub fn is_authorized(&self, username: &str, password: &str) -> bool {
+        self.users.get(username).map_or(false, |known_password| {
+            let a = password.as_bytes();
+            let b = known_password.as_bytes();
+            a.ct_eq(b).into()
+        })
+    }
+
+    fn into_users(self) -> BTreeMap<String, String> {
         self.users
-            .get(username)
-            .map(|known_password| known_password == password)
-            .unwrap_or(false)
     }
 }
 
@@ -76,6 +111,35 @@ struct AuthUserEntry {
     password: String,
 }
 
+/// Load auth settings from a file. Returns empty settings if path is None.
+/// Warns if the auth file is world-readable (Unix only).
+pub fn load_auth(path: Option<&Path>) -> Result<AuthSettings, AuthFileError> {
+    if let Some(p) = path {
+        check_auth_file_permissions(p);
+    }
+    let users = load_users_from_file(path)?;
+    Ok(AuthSettings::from_users(users))
+}
+
+/// Warn if auth file is world-readable. No-op on non-Unix.
+#[cfg(unix)]
+fn check_auth_file_permissions(path: &Path) {
+    use std::os::unix::fs::PermissionsExt;
+    if let Ok(meta) = std::fs::metadata(path) {
+        let mode = meta.permissions().mode();
+        if mode & 0o004 != 0 {
+            warn!(
+                path = %path.display(),
+                "auth file is world-readable; consider chmod 600"
+            );
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn check_auth_file_permissions(_path: &Path) {}
+
+/// Load users from auth file. Requires at least one valid credential when path is Some.
 pub fn load_users_from_file(path: Option<&Path>) -> Result<Vec<AuthUser>, AuthFileError> {
     let Some(path) = path else {
         return Ok(Vec::new());
@@ -98,16 +162,19 @@ pub fn load_users_from_file(path: Option<&Path>) -> Result<Vec<AuthUser>, AuthFi
     }
 
     if let Some(more) = parsed.users {
-        users.extend(more.into_iter().map(|entry| AuthUser {
-            username: entry.username,
-            password: entry.password,
-        }));
+        users.extend(
+            more.into_iter()
+                .map(|entry| AuthUser {
+                    username: entry.username,
+                    password: entry.password,
+                }),
+        );
     }
 
     let settings = AuthSettings::from_users(users);
     if settings.is_enabled() {
         Ok(settings
-            .users
+            .into_users()
             .into_iter()
             .map(|(username, password)| AuthUser { username, password })
             .collect::<Vec<_>>())
@@ -165,5 +232,43 @@ mod tests {
         assert_eq!(users[1].username, "bob");
         assert_eq!(users[1].password, "pw2");
         Ok(())
+    }
+
+    #[test]
+    fn load_users_rejects_empty_credentials_file() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("auth.toml");
+        std::fs::write(&path, "").unwrap();
+
+        let result = load_users_from_file(Some(&path));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn load_users_rejects_file_with_only_empty_users() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("auth.toml");
+        std::fs::write(&path, "username = \"\"\npassword = \"\"\n").unwrap();
+
+        let result = load_users_from_file(Some(&path));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn auth_rejects_wrong_password() {
+        let settings = AuthSettings::from_users(vec![AuthUser {
+            username: String::from("user"),
+            password: String::from("correct"),
+        }]);
+        assert!(!settings.is_authorized("user", "wrong"));
+    }
+
+    #[test]
+    fn auth_rejects_unknown_user() {
+        let settings = AuthSettings::from_users(vec![AuthUser {
+            username: String::from("alice"),
+            password: String::from("secret"),
+        }]);
+        assert!(!settings.is_authorized("bob", "secret"));
     }
 }

@@ -42,11 +42,15 @@ pub struct ParsedFilename {
     pub version: Option<u32>,
 }
 
-static TITLE_RE: LazyLock<Option<Regex>> =
-    LazyLock::new(|| Regex::new(r"(?i)(?P<title>[0-9a-f]{16})").ok());
+static TITLE_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)(?P<title>[0-9a-f]{16})")
+        .unwrap_or_else(|e| panic!("title regex must be valid: {e}"))
+});
 
-static VERSION_RE: LazyLock<Option<Regex>> =
-    LazyLock::new(|| Regex::new(r"(?i)\[v(?P<version>\d+)\]|(?:^|[^\w])v(?P<version_2>\d+)").ok());
+static VERSION_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)\[v(?P<version>\d+)\]|(?:^|[^\w])v(?P<version_2>\d+)")
+        .unwrap_or_else(|e| panic!("version regex must be valid: {e}"))
+});
 
 impl Catalog {
     pub fn from_files(mut files: Vec<ContentFile>) -> Self {
@@ -108,20 +112,13 @@ impl Catalog {
 
 pub fn parse_filename_metadata(name: &str) -> ParsedFilename {
     let title_id = TITLE_RE
-        .as_ref()
-        .and_then(|re| re.captures(name))
-        .and_then(|captures| captures.name("title"))
-        .and_then(|matched| to_upper_hex_chars(matched.as_str()));
+        .captures(name)
+        .and_then(|c| c.name("title"))
+        .and_then(|m| to_upper_hex_chars(m.as_str()));
 
     let version = VERSION_RE
-        .as_ref()
-        .and_then(|re| re.captures(name))
-        .and_then(|captures| {
-            captures
-                .name("version")
-                .or_else(|| captures.name("version_2"))
-                .map(|m| m.as_str())
-        })
+        .captures(name)
+        .and_then(|c| c.name("version").or_else(|| c.name("version_2")).map(|m| m.as_str()))
         .and_then(|raw| raw.parse::<u32>().ok());
 
     ParsedFilename { title_id, version }

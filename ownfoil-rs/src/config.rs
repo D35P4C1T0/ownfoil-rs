@@ -56,6 +56,12 @@ pub enum ConfigError {
     },
     #[error("invalid boolean value for env var {key}: {value}")]
     InvalidEnvBool { key: String, value: String },
+    #[error("library root {path} does not exist or is not a directory")]
+    LibraryRootInvalid { path: String },
+    #[error("auth file {path} does not exist")]
+    AuthFileNotFound { path: String },
+    #[error("private shop requires --auth-file or auth_file in config")]
+    AuthFileRequired,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -89,14 +95,39 @@ impl AppConfig {
             .unwrap_or(30)
             .max(1);
 
-        Ok(Self {
+        let config = Self {
             bind,
-            library_root,
+            library_root: library_root.clone(),
             auth_file,
             public_shop,
             scan_interval_seconds,
-        })
+        };
+
+        validate_config(&config)?;
+        Ok(config)
     }
+}
+
+fn validate_config(config: &AppConfig) -> Result<(), ConfigError> {
+    if !config.library_root.exists() || !config.library_root.is_dir() {
+        return Err(ConfigError::LibraryRootInvalid {
+            path: config.library_root.display().to_string(),
+        });
+    }
+
+    if !config.public_shop {
+        let auth_path = config
+            .auth_file
+            .as_ref()
+            .ok_or(ConfigError::AuthFileRequired)?;
+        if !auth_path.exists() {
+            return Err(ConfigError::AuthFileNotFound {
+                path: auth_path.display().to_string(),
+            });
+        }
+    }
+
+    Ok(())
 }
 
 fn read_file_config(path: Option<&Path>) -> Result<FileConfig, ConfigError> {

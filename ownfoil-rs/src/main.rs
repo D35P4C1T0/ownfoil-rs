@@ -8,10 +8,10 @@ mod http;
 mod scanner;
 mod serve_files;
 
+use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use anyhow::anyhow;
 use anyhow::Context;
 use axum::serve;
 use clap::Parser;
@@ -20,7 +20,7 @@ use tokio::sync::RwLock;
 use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
-use crate::auth::{load_users_from_file, AuthSettings};
+use crate::auth::load_auth;
 use crate::catalog::Catalog;
 use crate::config::{AppConfig, Cli};
 use crate::http::{router, AppState};
@@ -28,22 +28,22 @@ use crate::scanner::scan_library;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    init_logging();
+    init_logging().context("failed to initialize logging")?;
 
     let cli = Cli::parse();
     let config = AppConfig::from_cli(cli).context("failed to load configuration")?;
-    let users = if config.public_shop {
+    let auth = if config.public_shop {
         if config.auth_file.is_some() {
             info!("public shop mode enabled; auth file is ignored");
         }
-        Vec::new()
+        load_auth(None).context("failed to initialize auth")?
     } else {
-        let auth_path = config.auth_file.as_deref().ok_or_else(|| {
-            anyhow!("private shop requires auth credentials file. Set --auth-file or OWNFOIL_PUBLIC=true")
-        })?;
-        load_users_from_file(Some(auth_path)).context("failed to load auth credentials file")?
+        let auth_path = config
+            .auth_file
+            .as_deref()
+            .unwrap_or_else(|| unreachable!("validated by config"));
+        load_auth(Some(auth_path)).context("failed to load auth credentials file")?
     };
-    let auth = AuthSettings::from_users(users);
     info!(
         bind = %config.bind,
         root = %config.library_root.display(),
@@ -87,14 +87,22 @@ async fn main() -> anyhow::Result<()> {
         .await
         .with_context(|| format!("failed to bind {}", config.bind))?;
 
+    let shutdown = tokio::signal::ctrl_c();
     info!(bind = %config.bind, "ownfoil-rs listening");
 
-    serve(listener, app)
+    serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(async {
+            let _ = shutdown.await;
+            info!("shutting down gracefully");
+        })
         .await
         .context("server exited with error")
 }
 
-fn init_logging() {
+fn init_logging() -> anyhow::Result<()> {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
     tracing_subscriber::fmt()
@@ -102,6 +110,8 @@ fn init_logging() {
         .with_target(false)
         .compact()
         .init();
+
+    Ok(())
 }
 
 fn spawn_background_scanner(
@@ -115,15 +125,26 @@ fn spawn_background_scanner(
         loop {
             ticker.tick().await;
 
-            match scan_library(&root).await {
-                Ok(files) => {
-                    let count = files.len();
-                    let mut write_guard = catalog.write().await;
-                    *write_guard = Catalog::from_files(files);
-                    info!(files = count, "catalog refreshed");
-                }
-                Err(err) => {
-                    error!(error = %err, "catalog refresh failed");
+            let root = root.clone();
+            let catalog = Arc::clone(&catalog);
+            let handle = tokio::spawn(async move {
+                let files = scan_library(&root).await?;
+                let count = files.len();
+                let mut guard = catalog.write().await;
+                *guard = Catalog::from_files(files);
+                Ok::<_, crate::scanner::ScanError>(count)
+            });
+
+            match handle.await {
+                Ok(Ok(count)) => info!(files = count, "catalog refreshed"),
+                Ok(Err(err)) => error!(error = %err, "catalog refresh failed"),
+                Err(join_err) => {
+                    if join_err.is_panic() {
+                        error!(
+                            error = %join_err,
+                            "catalog scanner panicked; will retry on next interval"
+                        );
+                    }
                 }
             }
         }

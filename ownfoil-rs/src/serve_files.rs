@@ -63,8 +63,12 @@ pub async fn stream_with_range_support(
     headers: &HeaderMap,
 ) -> Result<Response, FileServeError> {
     let path = root.join(requested_path);
-    let metadata = tokio::fs::metadata(&path).await.map_err(|_| {
-        warn!(path = %requested_path.display(), "download target not found");
+    let metadata = tokio::fs::metadata(&path).await.map_err(|e| {
+        warn!(
+            path = %requested_path.display(),
+            error = %e,
+            "download target not found or inaccessible"
+        );
         FileServeError::NotFound
     })?;
 
@@ -205,5 +209,25 @@ mod tests {
         assert!(sanitize_relative_path("../etc/passwd").is_err());
         assert!(sanitize_relative_path("/../../abc").is_err());
         assert!(sanitize_relative_path("games/file.nsp").is_ok());
+    }
+
+    #[test]
+    fn sanitize_rejects_parent_dir_components() {
+        assert!(sanitize_relative_path("a/../b").is_err());
+        assert!(sanitize_relative_path("..").is_err());
+        assert!(sanitize_relative_path("a/../../b").is_err());
+    }
+
+    #[test]
+    fn sanitize_accepts_valid_paths() {
+        assert!(sanitize_relative_path("games/file.nsp").is_ok());
+        assert!(sanitize_relative_path("subdir/nested/game.xci").is_ok());
+        assert!(sanitize_relative_path("single.nsp").is_ok());
+    }
+
+    #[test]
+    fn sanitize_rejects_empty() {
+        assert!(sanitize_relative_path("").is_err());
+        assert!(sanitize_relative_path("/").is_err());
     }
 }

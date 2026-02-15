@@ -2,8 +2,8 @@ use std::ffi::OsStr;
 use std::path::Path;
 
 use thiserror::Error;
-use tokio::fs;
 use tracing::info;
+use walkdir::WalkDir;
 
 use crate::catalog::{
     classify_title_id, parse_filename_metadata, to_display_title_id, ContentFile,
@@ -28,75 +28,71 @@ pub enum ScanError {
 }
 
 pub async fn scan_library(root: &Path) -> Result<Vec<ContentFile>, ScanError> {
+    let root_path = root.to_path_buf();
+    let path_display = root_path.display().to_string();
+    tokio::task::spawn_blocking(move || scan_library_sync(&root_path))
+        .await
+        .map_err(|e| ScanError::Walk {
+            path: path_display,
+            source: std::io::Error::new(std::io::ErrorKind::Other, e.to_string()),
+        })?
+}
+
+fn scan_library_sync(root: &Path) -> Result<Vec<ContentFile>, ScanError> {
     let started_at = std::time::Instant::now();
     if !root.exists() {
         return Err(ScanError::MissingRoot(root.display().to_string()));
     }
 
-    let mut stack = vec![root.to_path_buf()];
     let mut out = Vec::new();
 
-    while let Some(dir) = stack.pop() {
-        let mut read_dir = fs::read_dir(&dir).await.map_err(|source| ScanError::Walk {
-            path: dir.display().to_string(),
+    for entry in WalkDir::new(root)
+        .follow_links(false)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
+        let path = entry.path();
+        if !entry.file_type().is_file() {
+            continue;
+        }
+
+        if !is_supported_content(path) {
+            continue;
+        }
+
+        let metadata = std::fs::metadata(path).map_err(|source| ScanError::Metadata {
+            path: path.display().to_string(),
             source,
         })?;
 
-        while let Some(entry) = read_dir
-            .next_entry()
-            .await
-            .map_err(|source| ScanError::Walk {
-                path: dir.display().to_string(),
-                source,
-            })?
-        {
-            let path = entry.path();
-            let metadata = entry
-                .metadata()
-                .await
-                .map_err(|source| ScanError::Metadata {
-                    path: path.display().to_string(),
-                    source,
-                })?;
+        let relative_path = path
+            .strip_prefix(root)
+            .map(Path::to_path_buf)
+            .map_err(|_| ScanError::NormalizePath {
+                path: path.display().to_string(),
+            })?;
 
-            if metadata.is_dir() {
-                stack.push(path);
-                continue;
-            }
+        let name = relative_path
+            .file_name()
+            .and_then(OsStr::to_str)
+            .map(String::from)
+            .unwrap_or_else(|| relative_path.display().to_string());
 
-            if !metadata.is_file() || !is_supported_content(&path) {
-                continue;
-            }
+        let parsed_name = parse_filename_metadata(&name);
+        let rel = relative_path.to_string_lossy();
+        let parsed_path = parse_filename_metadata(&rel);
 
-            let relative_path = path
-                .strip_prefix(root)
-                .map(Path::to_path_buf)
-                .map_err(|_| ScanError::NormalizePath {
-                    path: path.display().to_string(),
-                })?;
+        let title_id = to_display_title_id(parsed_name.title_id.or(parsed_path.title_id));
+        let kind = classify_title_id(title_id.as_deref());
 
-            let name = relative_path
-                .file_name()
-                .and_then(OsStr::to_str)
-                .map(String::from)
-                .unwrap_or_else(|| relative_path.display().to_string());
-
-            let parsed_name = parse_filename_metadata(&name);
-            let rel = relative_path.to_string_lossy();
-            let parsed_path = parse_filename_metadata(&rel);
-
-            let title_id = to_display_title_id(parsed_name.title_id.or(parsed_path.title_id));
-            let kind = classify_title_id(title_id.as_deref());
-
-            out.push(ContentFile {
-                relative_path,
-                name,
-                size: metadata.len(),
-                title_id,
-                version: parsed_name.version.or(parsed_path.version),
-                kind,
-            });
-        }
+        out.push(ContentFile {
+            relative_path,
+            name,
+            size: metadata.len(),
+            title_id,
+            version: parsed_name.version.or(parsed_path.version),
+            kind,
+        });
     }
 
     let with_title_id = out.iter().filter(|file| file.title_id.is_some()).count();
