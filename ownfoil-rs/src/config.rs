@@ -1,3 +1,8 @@
+//! Configuration: CLI args, config file, and runtime merge.
+//!
+//! Priority: CLI flags > config file > defaults. `data_dir` defaults to `./data`
+//! or `$XDG_DATA_HOME/ownfoil-rs` when set.
+
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
@@ -33,6 +38,7 @@ pub struct Cli {
     pub config: Option<PathBuf>,
 }
 
+/// Resolved application configuration after merging CLI, file, and env.
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub bind: SocketAddr,
@@ -44,6 +50,7 @@ pub struct AppConfig {
     pub titledb: TitleDbConfig,
 }
 
+/// TitleDB settings: region, language, refresh interval, optional URL override.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TitleDbConfig {
     pub enabled: bool,

@@ -1,3 +1,8 @@
+//! Catalog: in-memory index of content files with title/version grouping.
+//!
+//! Parses filenames for 16-char hex title IDs and version numbers. Classifies content
+//! as Base (suffix `000`), Update (`800`), or DLC (other).
+
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::LazyLock;
@@ -5,6 +10,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde::Serialize;
 
+/// Content type derived from title ID suffix.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ContentKind {
@@ -14,6 +20,8 @@ pub enum ContentKind {
     Unknown,
 }
 
+/// A single content file (NSP, XCI, etc.) with parsed metadata.
+/// A single content file (NSP, XCI, etc.) with parsed metadata.
 #[derive(Debug, Clone, Serialize)]
 pub struct ContentFile {
     pub relative_path: PathBuf,
@@ -24,12 +32,14 @@ pub struct ContentFile {
     pub kind: ContentKind,
 }
 
+/// All file versions for a given base title ID.
 #[derive(Debug, Clone, Serialize)]
 pub struct TitleVersions {
     pub title_id: String,
     pub files: Vec<ContentFile>,
 }
 
+/// Sorted index of content files with lookup by title ID.
 #[derive(Debug, Clone)]
 pub struct Catalog {
     files: Vec<ContentFile>,
@@ -53,6 +63,7 @@ static VERSION_RE: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 impl Catalog {
+    /// Build a catalog from scanned files. Sorts by title_id, version, name.
     pub fn from_files(mut files: Vec<ContentFile>) -> Self {
         files.sort_by(|left, right| {
             left.title_id
@@ -97,6 +108,7 @@ impl Catalog {
             .collect::<Vec<_>>()
     }
 
+    /// Get all versions (base, update, DLC) for a base title ID.
     pub fn versions(&self, title_id: &str) -> Option<TitleVersions> {
         let key = title_id.to_ascii_uppercase();
         self.titles.get(&key).map(|indices| TitleVersions {

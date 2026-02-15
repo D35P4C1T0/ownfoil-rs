@@ -1,3 +1,17 @@
+//! # ownfoil-rs
+//!
+//! Barebones CyberFoil-compatible Tinfoil game server in Rust.
+//!
+//! Serves a Nintendo Switch content library over HTTP with catalog listing, file download,
+//! and optional HTTP Basic auth. Compatible with Tinfoil and CyberFoil clients.
+//!
+//! ## Architecture
+//!
+//! - **Catalog**: In-memory index of `.nsp`, `.xci`, `.nsz`, `.xcz` files, refreshed on interval
+//! - **TitleDB**: Optional game metadata (icons, banners) from [blawar/titledb](https://github.com/blawar/titledb)
+//! - **Auth**: TOML-based credentials with constant-time password comparison
+//! - **HTTP**: Axum router with rate limiting, request IDs, and graceful shutdown
+
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used)]
 
@@ -130,6 +144,7 @@ async fn main() -> anyhow::Result<()> {
     .context("server exited with error")
 }
 
+/// Initialize tracing subscriber with `RUST_LOG` env filter (default: `info`).
 fn init_logging() -> anyhow::Result<()> {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
@@ -142,6 +157,8 @@ fn init_logging() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Spawns a background task that refreshes TitleDB at the given interval (e.g. `24h`).
+/// Runs one refresh immediately, then on a ticker.
 fn spawn_titledb_refresh(titledb: TitleDb, interval_str: &str) {
     let interval = humantime::parse_duration(interval_str).unwrap_or(Duration::from_secs(86400));
     tokio::spawn(async move {
@@ -154,6 +171,8 @@ fn spawn_titledb_refresh(titledb: TitleDb, interval_str: &str) {
     });
 }
 
+/// Spawns a background task that rescans the library root at the given interval.
+/// Updates the shared catalog in place. Logs errors but does not panic.
 fn spawn_background_scanner(
     catalog: Arc<RwLock<Catalog>>,
     root: std::path::PathBuf,

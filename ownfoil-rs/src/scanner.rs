@@ -1,3 +1,8 @@
+//! Library scanner: recursively walks a directory for `.nsp`, `.xci`, `.nsz`, `.xcz` files.
+//!
+//! Runs in a blocking task to avoid blocking the async runtime. Parses title ID and
+//! version from filenames (e.g. `[0100D2F00D5C0000][v0]`).
+
 use std::ffi::OsStr;
 use std::path::Path;
 
@@ -27,6 +32,10 @@ pub enum ScanError {
     NormalizePath { path: String },
 }
 
+/// Recursively scan the library root for supported content files.
+///
+/// Returns [`ContentFile`] entries with parsed title IDs.
+/// Runs in `spawn_blocking` to avoid blocking the async runtime.
 pub async fn scan_library(root: &Path) -> Result<Vec<ContentFile>, ScanError> {
     let root_path = root.to_path_buf();
     let path_display = root_path.display().to_string();

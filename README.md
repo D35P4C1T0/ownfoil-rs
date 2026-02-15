@@ -30,6 +30,12 @@ Barebones Rust port of the core OwnFoil content-server behavior, focused on Cybe
 
 Before pushing, run `./scripts/setup-hooks.sh` once to enable pre-push checks (fmt, clippy, test). This blocks `git push` if any check fails.
 
+Build API docs:
+
+```bash
+cargo doc -p ownfoil-rs --no-deps --open
+```
+
 ## Run
 
 ```bash
