@@ -1,4 +1,5 @@
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::module_inception)]
 mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;

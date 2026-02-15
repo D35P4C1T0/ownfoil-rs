@@ -34,7 +34,7 @@ pub async fn scan_library(root: &Path) -> Result<Vec<ContentFile>, ScanError> {
         .await
         .map_err(|e| ScanError::Walk {
             path: path_display,
-            source: std::io::Error::new(std::io::ErrorKind::Other, e.to_string()),
+            source: std::io::Error::other(e.to_string()),
         })?
 }
 

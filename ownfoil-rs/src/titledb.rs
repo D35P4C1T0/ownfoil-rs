@@ -34,6 +34,7 @@ struct TitleDbInner {
 }
 
 impl TitleDb {
+    #[allow(dead_code)]
     pub fn new(config: TitleDbConfig, data_dir: PathBuf) -> Self {
         Self::with_progress(config, data_dir, None)
     }
@@ -62,6 +63,7 @@ impl TitleDb {
         }
     }
 
+    #[allow(dead_code)]
     pub async fn progress_subscribe(&self) -> Option<broadcast::Receiver<String>> {
         self.inner
             .read()
@@ -145,7 +147,10 @@ async fn do_refresh_without_lock(inner: &RwLock<TitleDbInner>) -> Result<(), Tit
         .join("titledb")
         .join(format!("{region}.{lang}.json"));
 
-    std::fs::create_dir_all(cache_path.parent().unwrap())?;
+    let parent = cache_path
+        .parent()
+        .ok_or(TitleDbError::InvalidFormat)?;
+    std::fs::create_dir_all(parent)?;
     debug!(cache_path = %cache_path.display(), "titledb cache path");
 
     send_progress(&progress_tx, "[titledb] fetching from multiple sources...");
@@ -268,7 +273,7 @@ async fn fetch_and_merge(
                             banner_url: None,
                             name: None,
                         })
-                        .merge(&info);
+                        .merge(info);
                 }
                 info!(source = %name, entries = count, "titledb source fetched");
             }
@@ -317,15 +322,14 @@ async fn fetch_ownfoil_zip(
         warn!(url = %zip_url, error = %e, "titledb ownfoil zip: connection failed");
         TitleDbError::Http(e)
     })?;
-    let status = resp.status();
-    if !status.is_success() {
+    let resp = resp.error_for_status().map_err(|e| {
         warn!(
             url = %zip_url,
-            status = %status,
+            status = e.status().map(|s| s.as_u16()).unwrap_or(0),
             "titledb ownfoil zip: HTTP error"
         );
-        return Err(TitleDbError::Http(resp.error_for_status().unwrap_err()));
-    }
+        TitleDbError::Http(e)
+    })?;
     let bytes = resp.bytes().await?;
     let cursor = std::io::Cursor::new(bytes);
     let mut archive = zip::ZipArchive::new(cursor)?;
@@ -335,6 +339,7 @@ async fn fetch_ownfoil_zip(
 
     let has_titles = archive.by_name(&titles_name).is_ok();
     let mut file = if has_titles {
+        #[allow(clippy::unwrap_used)]
         archive.by_name(&titles_name).unwrap()
     } else {
         archive.by_name(&alt_name)?
@@ -351,15 +356,14 @@ async fn fetch_blawar_raw(url: &str) -> Result<Vec<(String, TitleInfo)>, TitleDb
         warn!(url = %url, error = %e, "titledb blawar: connection failed (DNS/network?)");
         TitleDbError::Http(e)
     })?;
-    let status = resp.status();
-    if !status.is_success() {
+    let resp = resp.error_for_status().map_err(|e| {
         warn!(
             url = %url,
-            status = %status,
+            status = e.status().map(|s| s.as_u16()).unwrap_or(0),
             "titledb blawar: HTTP error"
         );
-        return Err(TitleDbError::Http(resp.error_for_status().unwrap_err()));
-    }
+        TitleDbError::Http(e)
+    })?;
     let bytes = resp.bytes().await?;
     let buf = String::from_utf8(bytes.to_vec())?;
     parse_titles_json(&buf)

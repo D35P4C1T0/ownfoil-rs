@@ -100,7 +100,7 @@ async fn main() -> anyhow::Result<()> {
         sessions: SessionStore::new(24),
         titledb,
         data_dir: config.data_dir,
-        titledb_progress_tx: titledb_progress_tx,
+        titledb_progress_tx,
     };
 
     let app = router(state);

@@ -66,7 +66,7 @@ pub fn router(state: AppState) -> Router {
             .burst_size(50)
             .key_extractor(GlobalKeyExtractor)
             .finish()
-            .expect("default governor config is valid"),
+            .unwrap_or_else(|| panic!("default governor config is valid")),
     );
 
     Router::new()
@@ -101,7 +101,7 @@ pub fn router(state: AppState) -> Router {
         .layer(GovernorLayer::new(governor_conf))
         .layer(tower_http::request_id::SetRequestIdLayer::new(
             axum::http::header::HeaderName::from_static("x-request-id"),
-            tower_http::request_id::MakeRequestUuid::default(),
+            tower_http::request_id::MakeRequestUuid,
         ))
         .layer(tower_http::request_id::PropagateRequestIdLayer::new(
             axum::http::header::HeaderName::from_static("x-request-id"),
@@ -579,7 +579,7 @@ async fn titledb_test_connectivity(
                     "source": name,
                     "url": url,
                     "status": status,
-                    "ok": status >= 200 && status < 400,
+                    "ok": (200..400).contains(&status),
                     "elapsed_ms": elapsed_ms,
                 }));
             }

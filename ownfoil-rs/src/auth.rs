@@ -64,11 +64,13 @@ impl AuthSettings {
     }
 
     pub fn is_authorized(&self, username: &str, password: &str) -> bool {
-        self.users.get(username).map_or(false, |known_password| {
-            let a = password.as_bytes();
-            let b = known_password.as_bytes();
-            a.ct_eq(b).into()
-        })
+        self.users
+            .get(username)
+            .is_some_and(|known_password| {
+                let a = password.as_bytes();
+                let b = known_password.as_bytes();
+                a.ct_eq(b).into()
+            })
     }
 
     fn into_users(self) -> BTreeMap<String, String> {
@@ -183,6 +185,7 @@ pub fn load_users_from_file(path: Option<&Path>) -> Result<Vec<AuthUser>, AuthFi
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use anyhow::Result;
     use tempfile::tempdir;
