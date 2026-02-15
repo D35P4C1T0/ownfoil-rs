@@ -6,9 +6,20 @@ use tracing::{debug, warn};
 use super::error::ApiError;
 use super::state::AppState;
 
-pub fn ensure_authorized(state: &AppState, headers: &HeaderMap) -> Result<(), ApiError> {
+pub fn ensure_authorized(
+    state: &AppState,
+    headers: &HeaderMap,
+    session_token: Option<&str>,
+) -> Result<(), ApiError> {
     if !state.auth.is_enabled() {
         return Ok(());
+    }
+
+    if let Some(token) = session_token {
+        if state.sessions.get(token).is_some() {
+            debug!("authorized request using session");
+            return Ok(());
+        }
     }
 
     if let Some((username, password)) = extract_basic_auth(headers) {

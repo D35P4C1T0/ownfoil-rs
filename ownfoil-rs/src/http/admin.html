@@ -1,0 +1,179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ownfoil-rs — Library</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@knadh/oat@0.3.0/oat.min.css">
+  <style>
+    :root { --section-gap: 1.5rem; }
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem; }
+    .theme-toggle { cursor: pointer; padding: 0.25rem 0.5rem; border-radius: 4px; background: var(--bg-2); border: 1px solid var(--border); }
+    .grid-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1rem; }
+    .card-item { transition: transform 0.15s ease, box-shadow 0.15s ease; }
+    .card-item:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
+    .card-item .badge { font-size: 0.7rem; margin-left: 0.25rem; }
+    .card-item .meta { font-size: 0.85rem; color: inherit; opacity: 0.85; margin-top: 0.5rem; }
+    .card-item .card-title { margin: 0; font-size: 0.95rem; line-height: 1.3; overflow: hidden; white-space: nowrap; }
+    .card-item .card-title-inner { display: inline-block; animation: card-title-marquee 8s linear infinite; animation-play-state: paused; }
+    .card-item .card-title:hover .card-title-inner { animation-play-state: running; }
+    @keyframes card-title-marquee { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
+    .skeleton-card { height: 180px; }
+    .tab-panel { display: none; }
+    .tab-panel[aria-hidden="false"] { display: block; }
+    .empty-state { text-align: center; padding: 3rem; color: inherit; opacity: 0.85; }
+  </style>
+</head>
+<body data-theme="dark">
+  <main class="container" style="max-width: 1200px; margin: 0 auto; padding: 1.5rem;">
+    <header class="header">
+      <div>
+        <h1 style="margin: 0;">ownfoil-rs</h1>
+        <p style="margin: 0.25rem 0 0; opacity: 0.85; font-size: 0.9rem;">Library browser</p>
+      </div>
+      <div style="display: flex; align-items: center; gap: 0.75rem;">
+        <button type="button" id="theme-toggle" class="theme-toggle" title="Toggle theme">☀️</button>
+        <a href="/admin/settings" role="button" data-variant="secondary">Settings</a>
+        <a href="/admin/logout" role="button" data-variant="secondary">Logout</a>
+      </div>
+    </header>
+
+    <div role="tablist" style="margin-bottom: 1.5rem; display: flex; gap: 0.25rem; flex-wrap: wrap;">
+      <button type="button" role="tab" aria-selected="true" aria-controls="panel-new" id="tab-new" data-section="new">New</button>
+      <button type="button" role="tab" aria-selected="false" aria-controls="panel-recommended" id="tab-recommended" data-section="recommended">Recommended</button>
+      <button type="button" role="tab" aria-selected="false" aria-controls="panel-updates" id="tab-updates" data-section="updates">Updates</button>
+      <button type="button" role="tab" aria-selected="false" aria-controls="panel-dlc" id="tab-dlc" data-section="dlc">DLC</button>
+      <button type="button" role="tab" aria-selected="false" aria-controls="panel-all" id="tab-all" data-section="all">All</button>
+    </div>
+
+    <div id="loading" class="row" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 1rem;">
+      <div class="card skeleton-card skeleton" role="status"></div>
+      <div class="card skeleton-card skeleton" role="status"></div>
+      <div class="card skeleton-card skeleton" role="status"></div>
+      <div class="card skeleton-card skeleton" role="status"></div>
+      <div class="card skeleton-card skeleton" role="status"></div>
+    </div>
+
+    <div id="content" style="display: none;">
+      <div role="tabpanel" id="panel-new" aria-hidden="false" class="tab-panel">
+        <div id="grid-new" class="grid-cards"></div>
+      </div>
+      <div role="tabpanel" id="panel-recommended" aria-hidden="true" class="tab-panel">
+        <div id="grid-recommended" class="grid-cards"></div>
+      </div>
+      <div role="tabpanel" id="panel-updates" aria-hidden="true" class="tab-panel">
+        <div id="grid-updates" class="grid-cards"></div>
+      </div>
+      <div role="tabpanel" id="panel-dlc" aria-hidden="true" class="tab-panel">
+        <div id="grid-dlc" class="grid-cards"></div>
+      </div>
+      <div role="tabpanel" id="panel-all" aria-hidden="true" class="tab-panel">
+        <div id="grid-all" class="grid-cards"></div>
+      </div>
+    </div>
+
+    <div id="error" style="display: none;" role="alert" data-variant="danger">
+      Failed to load catalog. <a href="/admin">Retry</a>
+    </div>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/@knadh/oat@0.3.0/oat.min.js"></script>
+  <script>
+    const sections = { new: [], recommended: [], updates: [], dlc: [], all: [] };
+    let data = null;
+
+    function truncateTitleName(name) {
+      if (!name) return name;
+      return name
+        .replace(/\s*\[[0-9A-Fa-f]{16}\](?:\s*\[v\d+\])?\s*/gi, ' ')
+        .replace(/\s*\.(nsp|xci|nsz|xcz|nca|nspd|xcid)$/i, '')
+        .replace(/\s+/g, ' ')
+        .trim() || name;
+    }
+
+    function formatSize(bytes) {
+      if (bytes < 1024) return bytes + ' B';
+      if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+      if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+      return (bytes / (1024 * 1024 * 1024)).toFixed(1) + ' GB';
+    }
+
+    function renderCard(item) {
+      const typeClass = item.app_type === 'BASE' ? 'success' : item.app_type === 'UPDATE' ? 'warning' : 'secondary';
+      const iconSrc = item.icon_url ? (item.icon_url.startsWith('http') ? item.icon_url : (window.location.origin + item.icon_url)) : '';
+      const coverHtml = iconSrc
+        ? `<div style="aspect-ratio: 1; background: var(--bg-2); border-radius: 4px; margin-bottom: 0.75rem; overflow: hidden; position: relative;">
+            <div style="position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-size: 2rem; opacity: 0.4;">📦</div>
+            <img src="${escapeHtml(iconSrc)}" alt="" style="position: relative; z-index: 1; width: 100%; height: 100%; object-fit: cover;" loading="lazy" onerror="this.style.display='none'">
+          </div>`
+        : `<div style="aspect-ratio: 1; background: var(--bg-2); border-radius: 4px; margin-bottom: 0.75rem; display: flex; align-items: center; justify-content: center; font-size: 2rem; opacity: 0.4;">📦</div>`;
+      return `
+        <article class="card card-item">
+          ${coverHtml}
+          <h4 class="card-title"><span class="card-title-inner">${escapeHtml(truncateTitleName(item.title_name || item.name))} &nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ${escapeHtml(truncateTitleName(item.title_name || item.name))}</span></h4>
+          <span class="badge badge-${typeClass}">${item.app_type}</span>
+          <div class="meta">${item.title_id || '—'} · ${formatSize(item.size)}</div>
+        </article>
+      `;
+    }
+
+    function escapeHtml(s) {
+      const div = document.createElement('div');
+      div.textContent = s;
+      return div.innerHTML;
+    }
+
+    function renderSection(sectionId, items) {
+      const grid = document.getElementById('grid-' + sectionId);
+      if (!items.length) {
+        grid.innerHTML = '<div class="empty-state">No items in this section.</div>';
+        return;
+      }
+      grid.innerHTML = items.map(renderCard).join('');
+    }
+
+    function showTab(sectionId) {
+      document.querySelectorAll('[role="tab"]').forEach(t => {
+        t.setAttribute('aria-selected', t.dataset.section === sectionId);
+      });
+      document.querySelectorAll('[role="tabpanel"]').forEach(p => {
+        p.setAttribute('aria-hidden', p.id !== 'panel-' + sectionId);
+      });
+    }
+
+    document.querySelectorAll('[role="tab"]').forEach(btn => {
+      btn.addEventListener('click', () => showTab(btn.dataset.section));
+    });
+
+    const evtSrc = new EventSource('/api/settings/titledb/progress', { withCredentials: true });
+    evtSrc.onmessage = (e) => console.log(e.data);
+    evtSrc.onerror = () => evtSrc.close();
+
+    fetch('/api/shop/sections?limit=100', { credentials: 'include' })
+      .then(r => {
+        if (!r.ok) throw new Error(r.status);
+        return r.json();
+      })
+      .then(res => {
+        data = res;
+        res.sections.forEach(s => {
+          sections[s.id] = s.items || [];
+        });
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('content').style.display = 'block';
+        ['new', 'recommended', 'updates', 'dlc', 'all'].forEach(id => renderSection(id, sections[id]));
+      })
+      .catch(() => {
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('error').style.display = 'block';
+      });
+
+    document.getElementById('theme-toggle').addEventListener('click', () => {
+      const body = document.body;
+      const isDark = body.getAttribute('data-theme') === 'dark';
+      body.setAttribute('data-theme', isDark ? 'light' : 'dark');
+      document.getElementById('theme-toggle').textContent = isDark ? '🌙' : '☀️';
+    });
+  </script>
+</body>
+</html>
