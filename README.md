@@ -155,6 +155,27 @@ Compatibility aliases:
 3. If auth is enabled, provide matching username/password so the client sends HTTP Basic auth.
 4. Verify content downloads resolve to `/api/get_game/:id#filename` and support resume/range requests.
 
+### "Cannot reach shop" troubleshooting
+
+If CyberFoil reports "cannot reach shop", check:
+
+1. **Network reachability** – The Switch must reach the server over the network. From another device on the same LAN (e.g. phone), try:
+   ```bash
+   curl -v http://<server-ip>:8465/health
+   ```
+   You should get `{"status":"ok","catalog_files":N}`. If this fails, the Switch cannot reach the server.
+
+2. **Bind address** – The server must listen on all interfaces. Default is `0.0.0.0:8465`. If you use `--bind 127.0.0.1:8465` or a config file with `bind = "127.0.0.1:8465"`, only localhost can connect. Fix: run with `--bind 0.0.0.0:8465` explicitly.
+
+3. **Firewall** – Ensure port 8465 is allowed for incoming connections (e.g. `ufw allow 8465` or equivalent).
+
+4. **Auth** – If the shop is private, CyberFoil needs matching username/password in Settings → Shop. To rule out auth issues, try:
+   ```bash
+   OWNFOIL_PUBLIC=true cargo run -p ownfoil-rs -- --library-folder ./library
+   ```
+
+5. **Shop URL format** – Use `http://<ip>:8465` (no trailing slash). Ensure the IP is your machine’s LAN address (e.g. `192.168.1.x`), not `localhost`.
+
 ## Notes
 
 - Filename parsing extracts content identifier/version heuristically (for example, patterns like `[1234567890123456][v123]`).

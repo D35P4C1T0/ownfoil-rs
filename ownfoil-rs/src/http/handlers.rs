@@ -1,6 +1,9 @@
+use std::convert::Infallible;
+use std::net::SocketAddr;
 use std::sync::Arc;
 
-use axum::extract::{Path, Query, State};
+use axum::extract::{FromRequestParts, Path, Query, State};
+use axum::http::request::Parts;
 use axum::http::HeaderMap;
 use axum::response::Response;
 use axum::routing::get;
@@ -14,10 +17,39 @@ use tower_governor::{
 use tracing::{debug, warn};
 
 use crate::catalog::{ContentKind, TitleVersions};
-use crate::serve_files::{sanitize_relative_path, stream_with_range_support};
+use crate::serve_files::{
+    sanitize_relative_path, stream_with_range_support, DownloadLogContext,
+};
 
 use super::auth::ensure_authorized;
 use super::error::ApiError;
+
+/// Extracts peer address from request extensions when available (e.g. from
+/// `into_make_service_with_connect_info`). Returns `None` in tests or when
+/// connection info is not set.
+struct PeerAddr(pub Option<SocketAddr>);
+
+impl<S> FromRequestParts<S> for PeerAddr
+where
+    S: Send + Sync,
+{
+    type Rejection = Infallible;
+
+    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+        let addr = parts
+            .extensions
+            .get::<SocketAddr>()
+            .copied()
+            .or_else(|| {
+                parts
+                    .extensions
+                    .get::<axum::extract::ConnectInfo<SocketAddr>>()
+                    .map(|c| c.0)
+            });
+        Ok(PeerAddr(addr))
+    }
+}
+
 use super::responses::{
     build_catalog_response, build_shop_root_files, build_shop_sections_payload, catalog_sections,
     map_file_error, map_shop_files, map_to_entries, static_png_response,
@@ -192,6 +224,7 @@ async fn title_versions(
 
 async fn download(
     State(state): State<AppState>,
+    PeerAddr(peer): PeerAddr,
     Path(path): Path<String>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
@@ -201,8 +234,25 @@ async fn download(
         .decode_utf8()
         .map_err(|_| ApiError::InvalidPath)?;
     let sanitized = sanitize_relative_path(&decoded).map_err(map_file_error)?;
+    let title = sanitized
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("?")
+        .to_string();
 
-    let response = match stream_with_range_support(&state.library_root, &sanitized, &headers).await {
+    let log_ctx = peer.map(|ip| DownloadLogContext {
+        ip,
+        title: title.clone(),
+    });
+
+    let response = match stream_with_range_support(
+        &state.library_root,
+        &sanitized,
+        &headers,
+        log_ctx.as_ref(),
+    )
+    .await
+    {
         Ok(r) => r,
         Err(error) => {
             warn!(path = %sanitized.display(), error = %error, "download failed");
@@ -220,6 +270,7 @@ async fn download(
 
 async fn download_by_id(
     State(state): State<AppState>,
+    PeerAddr(peer): PeerAddr,
     Path(id): Path<usize>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
@@ -232,20 +283,31 @@ async fn download_by_id(
         (file.relative_path.clone(), file.name.clone())
     };
 
-    let response =
-        match stream_with_range_support(&state.library_root, &relative_path, &headers).await {
-            Ok(r) => r,
-            Err(error) => {
-                warn!(
-                    file_id = id,
-                    filename = %filename,
-                    path = %relative_path.display(),
-                    error = %error,
-                    "download by id failed"
-                );
-                return Err(map_file_error(error));
-            }
-        };
+    let log_ctx = peer.map(|ip| DownloadLogContext {
+        ip,
+        title: filename.clone(),
+    });
+
+    let response = match stream_with_range_support(
+        &state.library_root,
+        &relative_path,
+        &headers,
+        log_ctx.as_ref(),
+    )
+    .await
+    {
+        Ok(r) => r,
+        Err(error) => {
+            warn!(
+                file_id = id,
+                filename = %filename,
+                path = %relative_path.display(),
+                error = %error,
+                "download by id failed"
+            );
+            return Err(map_file_error(error));
+        }
+    };
 
     debug!(
         file_id = id,

@@ -1,14 +1,18 @@
 use std::path::{Component, Path, PathBuf};
+use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 
 use axum::body::Body;
 use axum::http::header::{ACCEPT_RANGES, CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, RANGE};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::Response;
+use bytes::Bytes;
+use futures_util::stream::{Stream, StreamExt};
+use std::io;
 use thiserror::Error;
 use tokio::fs::File;
 use tokio::io::{AsyncReadExt, AsyncSeekExt, SeekFrom};
 use tokio_util::io::ReaderStream;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 #[derive(Debug, Error)]
 pub enum FileServeError {
@@ -57,10 +61,53 @@ pub fn sanitize_relative_path(requested_path: &str) -> Result<PathBuf, FileServe
     Ok(sanitized)
 }
 
+/// Context for download logging (IP, title). When provided, logs progress during transfer.
+pub struct DownloadLogContext {
+    pub ip: std::net::SocketAddr,
+    pub title: String,
+}
+
+fn wrap_with_progress_log<S>(
+    stream: S,
+    total: u64,
+    ip: std::net::SocketAddr,
+    title: String,
+) -> impl Stream<Item = Result<Bytes, io::Error>> + Send
+where
+    S: Stream<Item = Result<Bytes, io::Error>> + Send,
+{
+    let sent = AtomicU64::new(0);
+    let last_pct = AtomicU8::new(0);
+    stream.map(move |item| {
+        if let Ok(ref chunk) = item {
+            let new_sent = sent.fetch_add(chunk.len() as u64, Ordering::Relaxed) + chunk.len() as u64;
+            let pct = if total > 0 {
+                ((new_sent as f64 / total as f64) * 100.0) as u8
+            } else {
+                100
+            };
+            let prev = last_pct.load(Ordering::Relaxed);
+            if pct >= prev.saturating_add(25) || new_sent >= total {
+                last_pct.store(pct.min(100), Ordering::Relaxed);
+                info!(
+                    ip = %ip,
+                    title = %title,
+                    progress = %format!("{}%", pct.min(100)),
+                    sent = new_sent,
+                    total,
+                    "content download"
+                );
+            }
+        }
+        item
+    })
+}
+
 pub async fn stream_with_range_support(
     root: &Path,
     requested_path: &Path,
     headers: &HeaderMap,
+    log_context: Option<&DownloadLogContext>,
 ) -> Result<Response, FileServeError> {
     let path = root.join(requested_path);
     let metadata = tokio::fs::metadata(&path).await.map_err(|e| {
@@ -90,6 +137,27 @@ pub async fn stream_with_range_support(
                 file.seek(SeekFrom::Start(range.start)).await?;
                 let limited = file.take(range.len());
                 let stream = ReaderStream::new(limited);
+                let (stream, content_len) = if let Some(ctx) = log_context {
+                    info!(
+                        ip = %ctx.ip,
+                        title = %ctx.title,
+                        progress = "0%",
+                        sent = 0u64,
+                        total = range.len(),
+                        "content download"
+                    );
+                    (
+                        Body::from_stream(wrap_with_progress_log(
+                            stream,
+                            range.len(),
+                            ctx.ip,
+                            ctx.title.clone(),
+                        )),
+                        range.len(),
+                    )
+                } else {
+                    (Body::from_stream(stream), range.len())
+                };
                 debug!(
                     path = %requested_path.display(),
                     start = range.start,
@@ -99,9 +167,9 @@ pub async fn stream_with_range_support(
                 );
                 (
                     StatusCode::PARTIAL_CONTENT,
-                    range.len(),
+                    content_len,
                     Some(format!("bytes {}-{}/{}", range.start, range.end, file_size)),
-                    Body::from_stream(stream),
+                    stream,
                 )
             }
             Some(Err(_)) => {
@@ -120,12 +188,33 @@ pub async fn stream_with_range_support(
             }
             None => {
                 let stream = ReaderStream::new(file);
+                let (stream, content_len) = if let Some(ctx) = log_context {
+                    info!(
+                        ip = %ctx.ip,
+                        title = %ctx.title,
+                        progress = "0%",
+                        sent = 0u64,
+                        total = file_size,
+                        "content download"
+                    );
+                    (
+                        Body::from_stream(wrap_with_progress_log(
+                            stream,
+                            file_size,
+                            ctx.ip,
+                            ctx.title.clone(),
+                        )),
+                        file_size,
+                    )
+                } else {
+                    (Body::from_stream(stream), file_size)
+                };
                 debug!(
                     path = %requested_path.display(),
                     file_size,
                     "serving full download"
                 );
-                (StatusCode::OK, file_size, None, Body::from_stream(stream))
+                (StatusCode::OK, content_len, None, stream)
             }
         };
 
