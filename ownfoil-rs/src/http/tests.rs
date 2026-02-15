@@ -66,7 +66,10 @@ mod tests {
         assert_eq!(response.status_code(), StatusCode::OK);
         let body: Value = response.json();
         assert_eq!(body.get("status"), Some(&Value::String("ok".into())));
-        assert_eq!(body.get("catalog_files"), Some(&Value::Number(1_i64.into())));
+        assert_eq!(
+            body.get("catalog_files"),
+            Some(&Value::Number(1_i64.into()))
+        );
         Ok(())
     }
 
@@ -423,9 +426,9 @@ mod tests {
             .get("sections")
             .and_then(Value::as_array)
             .and_then(|sections| {
-                sections.iter().find(|section| {
-                    section.get("id") == Some(&Value::String(String::from("dlc")))
-                })
+                sections
+                    .iter()
+                    .find(|section| section.get("id") == Some(&Value::String(String::from("dlc"))))
             })
             .and_then(|section| section.get("items"))
             .and_then(Value::as_array)

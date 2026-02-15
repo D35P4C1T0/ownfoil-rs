@@ -8,23 +8,19 @@ use axum::http::request::Parts;
 use axum::http::HeaderMap;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{Html, IntoResponse, Redirect, Response};
-use futures_util::stream::StreamExt;
-use axum_extra::extract::cookie::{Cookie, CookieJar};
-use axum_extra::extract::Form;
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use axum_extra::extract::cookie::{Cookie, CookieJar};
+use axum_extra::extract::Form;
+use futures_util::stream::StreamExt;
 use percent_encoding::percent_decode_str;
 use tower_governor::{
-    governor::GovernorConfigBuilder,
-    key_extractor::GlobalKeyExtractor,
-    GovernorLayer,
+    governor::GovernorConfigBuilder, key_extractor::GlobalKeyExtractor, GovernorLayer,
 };
 use tracing::{debug, warn};
 
 use crate::catalog::{ContentKind, TitleVersions};
-use crate::serve_files::{
-    sanitize_relative_path, stream_with_range_support, DownloadLogContext,
-};
+use crate::serve_files::{sanitize_relative_path, stream_with_range_support, DownloadLogContext};
 
 use crate::config::TitleDbConfig;
 
@@ -45,25 +41,21 @@ where
     type Rejection = Infallible;
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        let addr = parts
-            .extensions
-            .get::<SocketAddr>()
-            .copied()
-            .or_else(|| {
-                parts
-                    .extensions
-                    .get::<axum::extract::ConnectInfo<SocketAddr>>()
-                    .map(|c| c.0)
-            });
+        let addr = parts.extensions.get::<SocketAddr>().copied().or_else(|| {
+            parts
+                .extensions
+                .get::<axum::extract::ConnectInfo<SocketAddr>>()
+                .map(|c| c.0)
+        });
         Ok(PeerAddr(addr))
     }
 }
 
 use super::responses::{
     build_catalog_response, build_shop_root_files, build_shop_sections_payload, catalog_sections,
-    map_file_error, map_shop_files, map_to_entries, static_png_response,
-    CatalogResponse, HealthResponse, SavesListResponse, SearchQuery, SearchResponse,
-    SectionsResponse, ShopRootResponse, ShopSectionsQuery, ShopSectionsResponse,
+    map_file_error, map_shop_files, map_to_entries, static_png_response, CatalogResponse,
+    HealthResponse, SavesListResponse, SearchQuery, SearchResponse, SectionsResponse,
+    ShopRootResponse, ShopSectionsQuery, ShopSectionsResponse,
 };
 use super::state::AppState;
 
@@ -107,12 +99,10 @@ pub fn router(state: AppState) -> Router {
         .route("/api/settings/titledb/progress", get(titledb_progress_sse))
         .route("/api/settings/titledb/test", get(titledb_test_connectivity))
         .layer(GovernorLayer::new(governor_conf))
-        .layer(
-            tower_http::request_id::SetRequestIdLayer::new(
-                axum::http::header::HeaderName::from_static("x-request-id"),
-                tower_http::request_id::MakeRequestUuid::default(),
-            ),
-        )
+        .layer(tower_http::request_id::SetRequestIdLayer::new(
+            axum::http::header::HeaderName::from_static("x-request-id"),
+            tower_http::request_id::MakeRequestUuid::default(),
+        ))
         .layer(tower_http::request_id::PropagateRequestIdLayer::new(
             axum::http::header::HeaderName::from_static("x-request-id"),
         ))
@@ -400,14 +390,15 @@ struct LoginForm {
     password: String,
 }
 
-async fn login_page(
-    State(state): State<AppState>,
-    jar: CookieJar,
-) -> Result<Response, ApiError> {
+async fn login_page(State(state): State<AppState>, jar: CookieJar) -> Result<Response, ApiError> {
     if !state.auth.is_enabled() {
         return Err(ApiError::NotFound);
     }
-    if jar.get(SESSION_COOKIE).and_then(|c| state.sessions.get(c.value())).is_some() {
+    if jar
+        .get(SESSION_COOKIE)
+        .and_then(|c| state.sessions.get(c.value()))
+        .is_some()
+    {
         return Ok(Redirect::to("/admin").into_response());
     }
     Ok(Html(include_str!("login.html")).into_response())
@@ -434,10 +425,7 @@ async fn login_post(
     Ok((jar.add(cookie), Redirect::to("/admin")))
 }
 
-async fn admin_ui(
-    State(state): State<AppState>,
-    jar: CookieJar,
-) -> Result<Response, ApiError> {
+async fn admin_ui(State(state): State<AppState>, jar: CookieJar) -> Result<Response, ApiError> {
     if !state.auth.is_enabled() {
         return Err(ApiError::NotFound);
     }
@@ -461,13 +449,13 @@ async fn logout(
     if let Some(c) = jar.get(SESSION_COOKIE) {
         state.sessions.remove(c.value());
     }
-    Ok((jar.remove(Cookie::from(SESSION_COOKIE)), Redirect::to("/admin/login")))
+    Ok((
+        jar.remove(Cookie::from(SESSION_COOKIE)),
+        Redirect::to("/admin/login"),
+    ))
 }
 
-async fn settings_ui(
-    State(state): State<AppState>,
-    jar: CookieJar,
-) -> Result<Response, ApiError> {
+async fn settings_ui(State(state): State<AppState>, jar: CookieJar) -> Result<Response, ApiError> {
     if !state.auth.is_enabled() {
         return Err(ApiError::NotFound);
     }
@@ -501,9 +489,11 @@ async fn settings_get(
     ensure_authorized(&state, &headers, jar.get(SESSION_COOKIE).map(|c| c.value()))?;
     let titledb = state.titledb.config().await;
     let entries = state.titledb.entry_count().await;
-    let last_refresh = state.titledb.last_refresh().await.map(|t| {
-        humantime::format_duration(t.elapsed()).to_string()
-    });
+    let last_refresh = state
+        .titledb
+        .last_refresh()
+        .await
+        .map(|t| humantime::format_duration(t.elapsed()).to_string());
     Ok(Json(SettingsResponse {
         titledb,
         titledb_entries: entries,
@@ -535,12 +525,13 @@ async fn titledb_progress_sse(
 ) -> Result<Sse<impl futures_util::Stream<Item = Result<Event, Infallible>> + Send>, ApiError> {
     ensure_authorized(&state, &headers, jar.get(SESSION_COOKIE).map(|c| c.value()))?;
     let rx = state.titledb_progress_tx.subscribe();
-    let stream = tokio_stream::wrappers::BroadcastStream::new(rx)
-        .map(|r| match r {
-            Ok(msg) => Ok(Event::default().data(msg)),
-            Err(_) => Ok(Event::default().data("[titledb] (lagged, some messages dropped)")),
-        });
-    let initial = futures_util::stream::iter([Ok(Event::default().data("[titledb] connected, listening for progress..."))]);
+    let stream = tokio_stream::wrappers::BroadcastStream::new(rx).map(|r| match r {
+        Ok(msg) => Ok(Event::default().data(msg)),
+        Err(_) => Ok(Event::default().data("[titledb] (lagged, some messages dropped)")),
+    });
+    let initial = futures_util::stream::iter([Ok(
+        Event::default().data("[titledb] connected, listening for progress...")
+    )]);
     let stream = initial.chain(stream);
     Ok(Sse::new(stream).keep_alive(
         KeepAlive::new()
@@ -559,12 +550,10 @@ async fn titledb_test_connectivity(
     let region = &config.region;
     let lang = &config.language;
 
-    let blawar_raw_url = format!(
-        "https://raw.githubusercontent.com/blawar/titledb/master/{region}.{lang}.json"
-    );
-    let blawar_jsdelivr_url = format!(
-        "https://cdn.jsdelivr.net/gh/blawar/titledb@master/{region}.{lang}.json"
-    );
+    let blawar_raw_url =
+        format!("https://raw.githubusercontent.com/blawar/titledb/master/{region}.{lang}.json");
+    let blawar_jsdelivr_url =
+        format!("https://cdn.jsdelivr.net/gh/blawar/titledb@master/{region}.{lang}.json");
 
     let mut urls: Vec<(&str, String)> = vec![
         ("blawar_raw", blawar_raw_url),

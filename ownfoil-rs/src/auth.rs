@@ -162,13 +162,10 @@ pub fn load_users_from_file(path: Option<&Path>) -> Result<Vec<AuthUser>, AuthFi
     }
 
     if let Some(more) = parsed.users {
-        users.extend(
-            more.into_iter()
-                .map(|entry| AuthUser {
-                    username: entry.username,
-                    password: entry.password,
-                }),
-        );
+        users.extend(more.into_iter().map(|entry| AuthUser {
+            username: entry.username,
+            password: entry.password,
+        }));
     }
 
     let settings = AuthSettings::from_users(users);

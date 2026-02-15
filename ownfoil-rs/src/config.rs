@@ -132,9 +132,7 @@ impl AppConfig {
             .map(|p| p.join("data"))
             .unwrap_or_else(|| PathBuf::from("./data"));
 
-        let titledb = from_runtime
-            .or(from_file.titledb)
-            .unwrap_or_default();
+        let titledb = from_runtime.or(from_file.titledb).unwrap_or_default();
 
         let config = Self {
             bind,

@@ -243,20 +243,18 @@ pub async fn build_shop_sections_payload(
     limit: usize,
     titledb: &TitleDb,
 ) -> ShopSectionsResponse {
-    let indexed: Vec<_> = files
-        .iter()
-        .enumerate()
-        .map(|(i, f)| (i + 1, f))
-        .collect();
+    let indexed: Vec<_> = files.iter().enumerate().map(|(i, f)| (i + 1, f)).collect();
 
     let title_map = resolve_title_map(&indexed, titledb).await;
 
     let base_items = collect_base_items(&indexed, &title_map);
-    let update_items_full = collect_latest_by_key(&indexed, ContentKind::Update, &title_map, |item| {
-        item.title_id.clone().unwrap_or_else(|| item.app_id.clone())
+    let update_items_full =
+        collect_latest_by_key(&indexed, ContentKind::Update, &title_map, |item| {
+            item.title_id.clone().unwrap_or_else(|| item.app_id.clone())
+        });
+    let dlc_items_full = collect_latest_by_key(&indexed, ContentKind::Dlc, &title_map, |item| {
+        item.app_id.clone()
     });
-    let dlc_items_full =
-        collect_latest_by_key(&indexed, ContentKind::Dlc, &title_map, |item| item.app_id.clone());
 
     let mut all_items: Vec<_> = base_items
         .iter()
