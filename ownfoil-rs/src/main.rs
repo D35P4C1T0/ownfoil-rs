@@ -123,11 +123,11 @@ async fn main() -> anyhow::Result<()> {
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
     .with_graceful_shutdown(async {
-            let _ = shutdown.await;
-            info!("shutting down gracefully");
-        })
-        .await
-        .context("server exited with error")
+        let _ = shutdown.await;
+        info!("shutting down gracefully");
+    })
+    .await
+    .context("server exited with error")
 }
 
 fn init_logging() -> anyhow::Result<()> {

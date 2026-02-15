@@ -63,7 +63,12 @@ impl TitleDb {
     }
 
     pub async fn progress_subscribe(&self) -> Option<broadcast::Receiver<String>> {
-        self.inner.read().await.progress_tx.as_ref().map(|tx| tx.subscribe())
+        self.inner
+            .read()
+            .await
+            .progress_tx
+            .as_ref()
+            .map(|tx| tx.subscribe())
     }
 
     /// Look up icon and banner URLs for a title ID (16-char hex, uppercase).
@@ -166,7 +171,10 @@ async fn do_refresh_without_lock(inner: &RwLock<TitleDbInner>) -> Result<(), Tit
         let count = merged.len();
         guard.map = merged;
         guard.last_refresh = Some(std::time::Instant::now());
-        send_progress(&progress_tx, &format!("[titledb] loaded {} entries from network", count));
+        send_progress(
+            &progress_tx,
+            &format!("[titledb] loaded {} entries from network", count),
+        );
         info!(entries = count, "titledb loaded from network");
 
         if let Err(e) = save_cache(&cache_path, &guard.map) {
@@ -184,7 +192,10 @@ async fn do_refresh_without_lock(inner: &RwLock<TitleDbInner>) -> Result<(), Tit
                     let count = loaded.len();
                     guard.map = loaded;
                     guard.last_refresh = Some(std::time::Instant::now());
-                    send_progress(&progress_tx, &format!("[titledb] loaded {} entries from cache", count));
+                    send_progress(
+                        &progress_tx,
+                        &format!("[titledb] loaded {} entries from cache", count),
+                    );
                     info!(
                         entries = count,
                         path = %cache_path.display(),
@@ -245,7 +256,10 @@ async fn fetch_and_merge(
         match result {
             Ok(entries) => {
                 let count = entries.len();
-                send_progress(progress_tx, &format!("[titledb] {} fetched {} entries", name, count));
+                send_progress(
+                    progress_tx,
+                    &format!("[titledb] {} fetched {} entries", name, count),
+                );
                 for (id, info) in entries {
                     merged
                         .entry(id.clone())
@@ -425,15 +439,31 @@ fn load_cache(path: &std::path::Path) -> Result<HashMap<String, TitleInfo>, Titl
             .and_then(|v| v.as_str())
             .map(|s| s.to_uppercase());
         let Some(id) = id else { continue };
-        let icon_url = obj.get("icon_url").and_then(|v| v.as_str()).map(String::from);
-        let banner_url = obj.get("banner_url").and_then(|v| v.as_str()).map(String::from);
+        let icon_url = obj
+            .get("icon_url")
+            .and_then(|v| v.as_str())
+            .map(String::from);
+        let banner_url = obj
+            .get("banner_url")
+            .and_then(|v| v.as_str())
+            .map(String::from);
         let name = obj.get("name").and_then(|v| v.as_str()).map(String::from);
-        map.insert(id, TitleInfo { icon_url, banner_url, name });
+        map.insert(
+            id,
+            TitleInfo {
+                icon_url,
+                banner_url,
+                name,
+            },
+        );
     }
     Ok(map)
 }
 
-fn save_cache(path: &std::path::Path, map: &HashMap<String, TitleInfo>) -> Result<(), TitleDbError> {
+fn save_cache(
+    path: &std::path::Path,
+    map: &HashMap<String, TitleInfo>,
+) -> Result<(), TitleDbError> {
     let arr: Vec<serde_json::Value> = map
         .iter()
         .map(|(id, info)| {

@@ -118,7 +118,11 @@ pub fn parse_filename_metadata(name: &str) -> ParsedFilename {
 
     let version = VERSION_RE
         .captures(name)
-        .and_then(|c| c.name("version").or_else(|| c.name("version_2")).map(|m| m.as_str()))
+        .and_then(|c| {
+            c.name("version")
+                .or_else(|| c.name("version_2"))
+                .map(|m| m.as_str())
+        })
         .and_then(|raw| raw.parse::<u32>().ok());
 
     ParsedFilename { title_id, version }

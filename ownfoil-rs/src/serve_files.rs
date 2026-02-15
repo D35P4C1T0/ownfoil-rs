@@ -80,7 +80,8 @@ where
     let last_pct = AtomicU8::new(0);
     stream.map(move |item| {
         if let Ok(ref chunk) = item {
-            let new_sent = sent.fetch_add(chunk.len() as u64, Ordering::Relaxed) + chunk.len() as u64;
+            let new_sent =
+                sent.fetch_add(chunk.len() as u64, Ordering::Relaxed) + chunk.len() as u64;
             let pct = if total > 0 {
                 ((new_sent as f64 / total as f64) * 100.0) as u8
             } else {
