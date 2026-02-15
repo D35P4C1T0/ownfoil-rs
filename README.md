@@ -14,12 +14,16 @@ Barebones Rust port of the core OwnFoil content-server behavior, focused on Cybe
 
 - Minimal HTTP API for shop/catalog/title-version browsing
 - File streaming with single-range `Range` support (`206 Partial Content`)
-- Optional HTTP Basic auth (`Authorization: Basic ...`)
-- Dedicated auth credentials file support (`--auth-file`)
+- Optional HTTP Basic auth (`Authorization: Basic ...`) with constant-time password comparison
+- Dedicated auth credentials file support (`--auth-file`); warns if file is world-readable (Unix)
 - Private-by-default startup (requires auth file unless public mode is explicitly enabled)
-- Recursive scan of a content library root (`.nsp`, `.xci`, `.nsz`, `.xcz`)
-- Background catalog refresh interval
+- Recursive scan of a content library root (`.nsp`, `.xci`, `.nsz`, `.xcz`) via `walkdir`
+- Background catalog refresh interval with panic recovery
 - CyberFoil-compatible shop endpoints (`/`, `/api/shop/sections`, `/api/get_game/:id`)
+- Rate limiting (20 req/s, burst 50) per client IP
+- Request ID propagation (`X-Request-ID` header)
+- Graceful shutdown on Ctrl+C
+- Config validation (library root and auth file must exist at startup)
 
 ## Run
 
@@ -123,16 +127,19 @@ For best update/DLC behavior in CyberFoil:
 
 ## API Surface
 
-- `GET /health`
+- `GET /health` — Returns `{ status: "ok", catalog_files: N }` for readiness checks
 - `GET /` (Tinfoil/CyberFoil root payload: `success` + `files`)
 - `GET /api/catalog`
 - `GET /api/sections`
 - `GET /api/sections/:section` where `section in {new,recommended,updates,dlc,all}` (legacy compatibility aliases are also supported)
 - `GET /api/shop/sections?limit=<n>` (Ownfoil/CyberFoil-style sections with nested `items`)
+- `GET /api/shop/icon/:content_id` (placeholder icon endpoint for client compatibility)
+- `GET /api/shop/banner/:content_id` (placeholder banner endpoint for client compatibility)
 - `GET /api/search?q=<text>`
 - `GET /api/title/:content_id/versions`
 - `GET /api/download/*path`
 - `GET /api/get_game/:id`
+- `GET /api/saves/list` (minimal save-sync compatibility endpoint)
 
 Compatibility aliases:
 
