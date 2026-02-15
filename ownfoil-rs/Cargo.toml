@@ -2,7 +2,7 @@
 name = "ownfoil-rs"
 version = "0.2.0"
 edition = "2021"
-rust-version = "1.79"
+rust-version = "1.80"
 description = "Barebones CyberFoil-compatible Tinfoil game server in Rust"
 readme = "README.md"
 license = "MIT"

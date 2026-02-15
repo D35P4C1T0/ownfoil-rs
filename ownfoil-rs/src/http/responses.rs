@@ -343,10 +343,8 @@ fn collect_base_items(
 ) -> Vec<ShopSectionItem> {
     let mut items: Vec<_> = indexed
         .iter()
-        .filter_map(|(idx, file)| {
-            matches!(file.kind, ContentKind::Base | ContentKind::Unknown)
-                .then(|| to_shop_section_item(*idx, file, title_map))
-        })
+        .filter(|(_, file)| matches!(file.kind, ContentKind::Base | ContentKind::Unknown))
+        .map(|(idx, file)| to_shop_section_item(*idx, file, title_map))
         .collect();
     items.sort_by(|a, b| b.file_id.cmp(&a.file_id));
     items
