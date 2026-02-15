@@ -59,6 +59,7 @@ use super::responses::{
 };
 use super::state::AppState;
 
+/// Build the Axum router with all routes, layers (rate limit, request ID, trace), and state.
 pub fn router(state: AppState) -> Router {
     let governor_conf = Arc::new(
         GovernorConfigBuilder::default()

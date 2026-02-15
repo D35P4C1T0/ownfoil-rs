@@ -1,3 +1,7 @@
+//! File serving: path sanitization, range requests, and progress logging.
+//!
+//! Prevents path traversal. Supports `Range` for resumable downloads.
+
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicU8, Ordering};
 
@@ -40,6 +44,7 @@ impl ByteRange {
     }
 }
 
+/// Sanitize a request path: reject `..`, root, and empty. Returns a safe relative path.
 pub fn sanitize_relative_path(requested_path: &str) -> Result<PathBuf, FileServeError> {
     let requested = Path::new(requested_path.trim_start_matches('/'));
     let mut sanitized = PathBuf::new();

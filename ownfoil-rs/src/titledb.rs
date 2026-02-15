@@ -11,10 +11,15 @@ use tracing::{debug, error, info, warn};
 use crate::config::TitleDbConfig;
 
 /// Per-title metadata from TitleDB.
+///
+/// Used to enrich shop section items with icon/banner URLs and display names.
 #[derive(Debug, Clone)]
 pub struct TitleInfo {
+    /// CDN URL for the game icon (e.g. Nintendo eShop).
     pub icon_url: Option<String>,
+    /// CDN URL for the banner image.
     pub banner_url: Option<String>,
+    /// Localized game name.
     pub name: Option<String>,
 }
 
@@ -39,6 +44,9 @@ impl TitleDb {
         Self::with_progress(config, data_dir, None)
     }
 
+    /// Create a TitleDB instance with optional progress broadcast channel.
+    ///
+    /// Progress messages are sent during refresh (e.g. for SSE in the admin UI).
     pub fn with_progress(
         config: TitleDbConfig,
         data_dir: PathBuf,
