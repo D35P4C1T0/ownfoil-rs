@@ -2,7 +2,11 @@
 # Run CI checks before allowing push. Same as .github/workflows/ci.yml
 set -e
 echo "Running pre-push checks..."
-cargo fmt --all -- --check
+cargo fmt --all
+if ! git diff --quiet; then
+    echo "Code was reformatted. Run: git add -A && git commit -m 'Apply rustfmt' && git push"
+    exit 1
+fi
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --locked
 echo "All checks passed."
