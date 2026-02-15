@@ -87,6 +87,13 @@ async fn main() -> anyhow::Result<()> {
         .await
         .with_context(|| format!("failed to bind {}", config.bind))?;
 
+    if config.bind.ip().is_loopback() {
+        tracing::warn!(
+            bind = %config.bind,
+            "binding to loopback; use --bind 0.0.0.0:8465 for LAN access"
+        );
+    }
+
     let shutdown = tokio::signal::ctrl_c();
     info!(bind = %config.bind, "ownfoil-rs listening");
 
