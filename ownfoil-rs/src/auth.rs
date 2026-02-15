@@ -64,13 +64,11 @@ impl AuthSettings {
     }
 
     pub fn is_authorized(&self, username: &str, password: &str) -> bool {
-        self.users
-            .get(username)
-            .is_some_and(|known_password| {
-                let a = password.as_bytes();
-                let b = known_password.as_bytes();
-                a.ct_eq(b).into()
-            })
+        self.users.get(username).is_some_and(|known_password| {
+            let a = password.as_bytes();
+            let b = known_password.as_bytes();
+            a.ct_eq(b).into()
+        })
     }
 
     fn into_users(self) -> BTreeMap<String, String> {

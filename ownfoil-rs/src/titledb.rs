@@ -147,9 +147,7 @@ async fn do_refresh_without_lock(inner: &RwLock<TitleDbInner>) -> Result<(), Tit
         .join("titledb")
         .join(format!("{region}.{lang}.json"));
 
-    let parent = cache_path
-        .parent()
-        .ok_or(TitleDbError::InvalidFormat)?;
+    let parent = cache_path.parent().ok_or(TitleDbError::InvalidFormat)?;
     std::fs::create_dir_all(parent)?;
     debug!(cache_path = %cache_path.display(), "titledb cache path");
 
