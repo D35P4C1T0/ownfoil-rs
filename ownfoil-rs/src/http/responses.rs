@@ -4,8 +4,8 @@ use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
 use serde::{Deserialize, Serialize};
 
 use crate::catalog::{ContentFile, ContentKind};
-
 use crate::serve_files::FileServeError;
+use crate::titledb::{TitleDb, TitleInfo};
 
 use super::error::ApiError;
 
@@ -238,19 +238,25 @@ pub fn build_shop_root_files(files: &[ContentFile]) -> Vec<ShopRootFile> {
         .collect()
 }
 
-pub fn build_shop_sections_payload(files: &[ContentFile], limit: usize) -> ShopSectionsResponse {
+pub async fn build_shop_sections_payload(
+    files: &[ContentFile],
+    limit: usize,
+    titledb: &TitleDb,
+) -> ShopSectionsResponse {
     let indexed: Vec<_> = files
         .iter()
         .enumerate()
         .map(|(i, f)| (i + 1, f))
         .collect();
 
-    let base_items = collect_base_items(&indexed);
-    let update_items_full = collect_latest_by_key(&indexed, ContentKind::Update, |item| {
+    let title_map = resolve_title_map(&indexed, titledb).await;
+
+    let base_items = collect_base_items(&indexed, &title_map);
+    let update_items_full = collect_latest_by_key(&indexed, ContentKind::Update, &title_map, |item| {
         item.title_id.clone().unwrap_or_else(|| item.app_id.clone())
     });
     let dlc_items_full =
-        collect_latest_by_key(&indexed, ContentKind::Dlc, |item| item.app_id.clone());
+        collect_latest_by_key(&indexed, ContentKind::Dlc, &title_map, |item| item.app_id.clone());
 
     let mut all_items: Vec<_> = base_items
         .iter()
@@ -314,12 +320,34 @@ pub fn build_shop_sections_payload(files: &[ContentFile], limit: usize) -> ShopS
     }
 }
 
-fn collect_base_items(indexed: &[(usize, &ContentFile)]) -> Vec<ShopSectionItem> {
+async fn resolve_title_map(
+    indexed: &[(usize, &ContentFile)],
+    titledb: &TitleDb,
+) -> HashMap<String, TitleInfo> {
+    let ids: Vec<String> = indexed
+        .iter()
+        .filter_map(|(_, f)| derive_base_title_id(f.kind, f.title_id.as_deref()))
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+
+    let results = futures_util::future::join_all(ids.iter().map(|id| titledb.lookup(id))).await;
+
+    ids.into_iter()
+        .zip(results.into_iter())
+        .filter_map(|(id, info)| info.map(|i| (id, i)))
+        .collect()
+}
+
+fn collect_base_items(
+    indexed: &[(usize, &ContentFile)],
+    title_map: &HashMap<String, TitleInfo>,
+) -> Vec<ShopSectionItem> {
     let mut items: Vec<_> = indexed
         .iter()
         .filter_map(|(idx, file)| {
             matches!(file.kind, ContentKind::Base | ContentKind::Unknown)
-                .then(|| to_shop_section_item(*idx, file))
+                .then(|| to_shop_section_item(*idx, file, title_map))
         })
         .collect();
     items.sort_by(|a, b| b.file_id.cmp(&a.file_id));
@@ -329,6 +357,7 @@ fn collect_base_items(indexed: &[(usize, &ContentFile)]) -> Vec<ShopSectionItem>
 fn collect_latest_by_key<F>(
     indexed: &[(usize, &ContentFile)],
     kind: ContentKind,
+    title_map: &HashMap<String, TitleInfo>,
     key_fn: F,
 ) -> Vec<ShopSectionItem>
 where
@@ -336,7 +365,7 @@ where
 {
     let mut latest: HashMap<String, ShopSectionItem> = HashMap::new();
     for (idx, file) in indexed.iter().filter(|(_, f)| f.kind == kind).copied() {
-        let item = to_shop_section_item(idx, file);
+        let item = to_shop_section_item(idx, file, title_map);
         let key = key_fn(&item);
         let keep = latest.get(&key).map_or(true, |cur| {
             parse_version_number(&item.app_version) > parse_version_number(&cur.app_version)
@@ -352,17 +381,23 @@ where
     out
 }
 
-fn to_shop_section_item(file_id: usize, file: &ContentFile) -> ShopSectionItem {
+fn to_shop_section_item(
+    file_id: usize,
+    file: &ContentFile,
+    title_map: &HashMap<String, TitleInfo>,
+) -> ShopSectionItem {
     let app_id = file
         .title_id
         .as_ref()
         .map(String::from)
         .unwrap_or_else(|| file.name.clone());
     let base_title_id = derive_base_title_id(file.kind, file.title_id.as_deref());
-    let icon_url = base_title_id
-        .as_deref()
-        .map(shop_icon_url)
-        .unwrap_or_default();
+    let icon_url = base_title_id.as_ref().map_or(String::new(), |tid| {
+        title_map
+            .get(tid)
+            .and_then(|t| t.icon_url.clone())
+            .unwrap_or_else(|| shop_icon_url(tid))
+    });
     let app_version = file
         .version
         .map(|v| v.to_string())
@@ -457,23 +492,26 @@ pub fn catalog_sections() -> Vec<SectionInfo> {
     ]
 }
 
-pub fn static_png_response() -> axum::response::Response {
-    const PLACEHOLDER_PNG: [u8; 68] = [
-        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
-        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x04, 0x00, 0x00, 0x00, 0xb5,
-        0x1c, 0x0c, 0x02, 0x00, 0x00, 0x00, 0x0b, 0x49, 0x44, 0x41, 0x54, 0x78, 0xda, 0x63, 0xfc,
-        0xff, 0x1f, 0x00, 0x03, 0x03, 0x02, 0x00, 0xee, 0xd9, 0xda, 0x2a, 0x00, 0x00, 0x00, 0x00,
-        0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
-    ];
+/// 256x256 SVG placeholder for missing game covers. Works in both light and dark themes.
+const PLACEHOLDER_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <rect width="256" height="256" fill="#374151"/>
+  <g fill="#9ca3af" opacity="0.6">
+    <rect x="88" y="72" width="80" height="80" rx="8"/>
+    <circle cx="108" cy="92" r="8"/>
+    <circle cx="148" cy="92" r="8"/>
+    <path d="M88 140h80v24H88z"/>
+  </g>
+</svg>"##;
 
+pub fn static_png_response() -> axum::response::Response {
     use axum::body::Body;
     use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
     use axum::http::HeaderValue;
 
-    let mut response = axum::response::Response::new(Body::from(PLACEHOLDER_PNG.to_vec()));
+    let mut response = axum::response::Response::new(Body::from(PLACEHOLDER_SVG));
     response
         .headers_mut()
-        .insert(CONTENT_TYPE, HeaderValue::from_static("image/png"));
+        .insert(CONTENT_TYPE, HeaderValue::from_static("image/svg+xml"));
     response.headers_mut().insert(
         CACHE_CONTROL,
         HeaderValue::from_static("public, max-age=604800, immutable"),

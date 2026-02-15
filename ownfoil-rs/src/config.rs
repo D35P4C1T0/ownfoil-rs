@@ -40,6 +40,35 @@ pub struct AppConfig {
     pub auth_file: Option<PathBuf>,
     pub public_shop: bool,
     pub scan_interval_seconds: u64,
+    pub data_dir: PathBuf,
+    pub titledb: TitleDbConfig,
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct TitleDbConfig {
+    pub enabled: bool,
+    pub region: String,
+    pub language: String,
+    #[serde(default = "default_titledb_refresh")]
+    pub refresh_interval: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub url_override: Option<String>,
+}
+
+fn default_titledb_refresh() -> String {
+    "24h".to_string()
+}
+
+impl Default for TitleDbConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            region: "US".to_string(),
+            language: "en".to_string(),
+            refresh_interval: "24h".to_string(),
+            url_override: None,
+        }
+    }
 }
 
 #[derive(Debug, Error)]
@@ -72,11 +101,14 @@ struct FileConfig {
     auth_file: Option<PathBuf>,
     public_shop: Option<bool>,
     scan_interval_seconds: Option<u64>,
+    titledb: Option<TitleDbConfig>,
 }
 
 impl AppConfig {
     pub fn from_cli(cli: Cli) -> Result<Self, ConfigError> {
-        let from_file = read_file_config(cli.config.as_deref())?;
+        let config_path = cli.config.as_deref();
+        let from_file = read_file_config(config_path)?;
+        let from_runtime = read_runtime_config(config_path)?;
         let env_public_shop = read_public_shop_env()?;
 
         let bind = cli
@@ -95,12 +127,23 @@ impl AppConfig {
             .unwrap_or(30)
             .max(1);
 
+        let data_dir = config_path
+            .and_then(|p| p.parent())
+            .map(|p| p.join("data"))
+            .unwrap_or_else(|| PathBuf::from("./data"));
+
+        let titledb = from_runtime
+            .or(from_file.titledb)
+            .unwrap_or_default();
+
         let config = Self {
             bind,
             library_root: library_root.clone(),
             auth_file,
             public_shop,
             scan_interval_seconds,
+            data_dir,
+            titledb,
         };
 
         validate_config(&config)?;
@@ -144,6 +187,30 @@ fn read_file_config(path: Option<&Path>) -> Result<FileConfig, ConfigError> {
         path: path.display().to_string(),
         source,
     })
+}
+
+fn read_runtime_config(config_path: Option<&Path>) -> Result<Option<TitleDbConfig>, ConfigError> {
+    let data_dir = config_path
+        .and_then(|p| p.parent())
+        .map(|p| p.join("data"))
+        .unwrap_or_else(|| PathBuf::from("./data"));
+    let runtime_path = data_dir.join("settings.toml");
+    if !runtime_path.exists() {
+        return Ok(None);
+    }
+    let raw = std::fs::read_to_string(&runtime_path).map_err(|source| ConfigError::Read {
+        path: runtime_path.display().to_string(),
+        source,
+    })?;
+    #[derive(Deserialize)]
+    struct RuntimeConfig {
+        titledb: Option<TitleDbConfig>,
+    }
+    let parsed: RuntimeConfig = toml::from_str(&raw).map_err(|source| ConfigError::Parse {
+        path: runtime_path.display().to_string(),
+        source,
+    })?;
+    Ok(parsed.titledb)
 }
 
 fn read_public_shop_env() -> Result<Option<bool>, ConfigError> {

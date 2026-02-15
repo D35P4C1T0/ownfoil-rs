@@ -24,6 +24,7 @@ Barebones Rust port of the core OwnFoil content-server behavior, focused on Cybe
 - Request ID propagation (`X-Request-ID` header)
 - Graceful shutdown on Ctrl+C
 - Config validation (library root and auth file must exist at startup)
+- Admin web UI at `/admin` for browsing titles (session auth, auth.toml users)
 
 ## Run
 
@@ -146,6 +147,18 @@ Compatibility aliases:
 - `GET /shop`, `GET /index`, `GET /titles`
 - `GET /api/shop`, `GET /api/index`, `GET /api/titles`
 - `GET /download/*path`
+
+## Admin Web UI
+
+When auth is enabled, an admin web UI is available at `/admin` for browsing the library in a browser.
+
+1. Visit `http://<server-ip>:8465/admin`
+2. Log in with credentials from your auth file
+3. Browse titles by section (New, Recommended, Updates, DLC, All)
+4. Dark theme by default; use the toggle for light theme
+5. Log out via the Logout button
+
+The web UI uses session cookies (24h TTL). API requests from the same browser session use the cookie automatically.
 
 ## Client Setup (Tinfoil/CyberFoil)
 

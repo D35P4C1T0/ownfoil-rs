@@ -7,6 +7,7 @@ mod config;
 mod http;
 mod scanner;
 mod serve_files;
+mod titledb;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -23,8 +24,9 @@ use tracing_subscriber::EnvFilter;
 use crate::auth::load_auth;
 use crate::catalog::Catalog;
 use crate::config::{AppConfig, Cli};
-use crate::http::{router, AppState};
+use crate::http::{router, AppState, SessionStore};
 use crate::scanner::scan_library;
+use crate::titledb::TitleDb;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -76,10 +78,29 @@ async fn main() -> anyhow::Result<()> {
         Duration::from_secs(config.scan_interval_seconds),
     );
 
+    let (titledb_progress_tx, _) = tokio::sync::broadcast::channel::<String>(16);
+    let titledb = TitleDb::with_progress(
+        config.titledb.clone(),
+        config.data_dir.clone(),
+        Some(titledb_progress_tx.clone()),
+    );
+    let refresh_interval = config.titledb.refresh_interval.as_str();
+    spawn_titledb_refresh(titledb.clone(), refresh_interval);
+    if config.titledb.enabled {
+        info!(
+            refresh_interval = %refresh_interval,
+            "titledb background refresh scheduled"
+        );
+    }
+
     let state = AppState {
         catalog,
         library_root: config.library_root,
         auth: Arc::new(auth),
+        sessions: SessionStore::new(24),
+        titledb,
+        data_dir: config.data_dir,
+        titledb_progress_tx: titledb_progress_tx,
     };
 
     let app = router(state);
@@ -119,6 +140,18 @@ fn init_logging() -> anyhow::Result<()> {
         .init();
 
     Ok(())
+}
+
+fn spawn_titledb_refresh(titledb: TitleDb, interval_str: &str) {
+    let interval = humantime::parse_duration(interval_str).unwrap_or(Duration::from_secs(86400));
+    tokio::spawn(async move {
+        titledb.refresh();
+        let mut ticker = tokio::time::interval(interval);
+        loop {
+            ticker.tick().await;
+            titledb.refresh();
+        }
+    });
 }
 
 fn spawn_background_scanner(

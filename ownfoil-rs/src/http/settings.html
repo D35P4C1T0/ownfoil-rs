@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ownfoil-rs — Settings</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@knadh/oat@0.3.0/oat.min.css">
+  <style>
+    .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem; }
+    .form-section { margin-bottom: 1.5rem; }
+    .form-section h3 { margin: 0 0 0.75rem; font-size: 1rem; }
+  </style>
+</head>
+<body data-theme="dark">
+  <main class="container" style="max-width: 600px; margin: 0 auto; padding: 1.5rem;">
+    <header class="header">
+      <div>
+        <h1 style="margin: 0;">ownfoil-rs</h1>
+        <p style="margin: 0.25rem 0 0; opacity: 0.85; font-size: 0.9rem;">Settings</p>
+      </div>
+      <a href="/admin" role="button" data-variant="secondary">← Library</a>
+    </header>
+
+    <div id="msg" role="alert" style="display: none; margin-bottom: 1rem;"></div>
+
+    <form id="settings-form" class="card" style="padding: 1.5rem;">
+      <div class="form-section">
+        <h3>TitleDB (game covers)</h3>
+        <fieldset>
+          <label>
+            <input type="checkbox" id="titledb-enabled" name="enabled">
+            Enable TitleDB
+          </label>
+        </fieldset>
+        <fieldset>
+          <label for="titledb-region">Region</label>
+          <input type="text" id="titledb-region" name="region" placeholder="US" maxlength="4">
+        </fieldset>
+        <fieldset>
+          <label for="titledb-language">Language</label>
+          <input type="text" id="titledb-language" name="language" placeholder="en" maxlength="4">
+        </fieldset>
+        <fieldset>
+          <label for="titledb-refresh">Refresh interval</label>
+          <input type="text" id="titledb-refresh" name="refresh_interval" placeholder="24h">
+          <small style="opacity: 0.8;">e.g. 24h, 12h, 1d</small>
+        </fieldset>
+        <fieldset>
+          <label for="titledb-url">URL override (optional)</label>
+          <input type="text" id="titledb-url" name="url_override" placeholder="Leave empty — uses blawar JSON (~80MB)">
+        </fieldset>
+        <p id="titledb-status" style="font-size: 0.85rem; opacity: 0.85; margin-top: 0.5rem;">
+          — entries loaded, last refresh: —
+        </p>
+      </div>
+      <button type="submit" data-variant="primary">Save</button>
+      <button type="button" id="refresh-btn" data-variant="secondary" style="margin-left: 0.5rem;">Refresh now</button>
+      <button type="button" id="test-btn" data-variant="secondary" style="margin-left: 0.5rem;">Test connectivity</button>
+    </form>
+  </main>
+
+  <script>
+    const evtSrc = new EventSource('/api/settings/titledb/progress', { withCredentials: true });
+    evtSrc.onmessage = (e) => console.log(e.data);
+    evtSrc.onerror = () => evtSrc.close();
+
+    const form = document.getElementById('settings-form');
+    const msg = document.getElementById('msg');
+    const statusEl = document.getElementById('titledb-status');
+
+    function showMsg(text, variant) {
+      msg.textContent = text;
+      msg.setAttribute('data-variant', variant || 'info');
+      msg.style.display = 'block';
+      setTimeout(() => { msg.style.display = 'none'; }, 4000);
+    }
+
+    fetch('/api/settings', { credentials: 'include' })
+      .then(r => {
+        if (!r.ok) throw new Error(r.status);
+        return r.json();
+      })
+      .then(data => {
+        const t = data.titledb;
+        document.getElementById('titledb-enabled').checked = t.enabled;
+        document.getElementById('titledb-region').value = t.region || 'US';
+        document.getElementById('titledb-language').value = t.language || 'en';
+        document.getElementById('titledb-refresh').value = t.refresh_interval || '24h';
+        document.getElementById('titledb-url').value = t.url_override || '';
+        statusEl.textContent = `${data.titledb_entries} entries loaded${data.titledb_last_refresh ? ', last refresh: ' + data.titledb_last_refresh + ' ago' : ''}`;
+      })
+      .catch(() => showMsg('Failed to load settings', 'danger'));
+
+    form.addEventListener('submit', (e) => {
+      e.preventDefault();
+      const payload = {
+        titledb: {
+          enabled: document.getElementById('titledb-enabled').checked,
+          region: document.getElementById('titledb-region').value.trim() || 'US',
+          language: document.getElementById('titledb-language').value.trim() || 'en',
+          refresh_interval: document.getElementById('titledb-refresh').value.trim() || '24h',
+          url_override: document.getElementById('titledb-url').value.trim() || null
+        }
+      };
+      if (!payload.titledb.url_override) delete payload.titledb.url_override;
+
+      fetch('/api/settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(payload)
+      })
+        .then(r => r.json())
+        .then(() => showMsg('Settings saved', 'success'))
+        .catch(() => showMsg('Failed to save', 'danger'));
+    });
+
+    document.getElementById('refresh-btn').addEventListener('click', () => {
+      fetch('/api/settings/refresh', { method: 'POST', credentials: 'include' })
+        .then(r => r.ok ? showMsg('Refresh started', 'success') : Promise.reject())
+        .catch(() => showMsg('Refresh failed', 'danger'));
+    });
+
+    document.getElementById('test-btn').addEventListener('click', () => {
+      fetch('/api/settings/titledb/test', { credentials: 'include' })
+        .then(r => r.json())
+        .then(data => {
+          console.table(data.results);
+          console.log('Hint:', data.hint);
+          const ok = data.results.filter(r => r.ok).length;
+          showMsg(`${ok}/${data.results.length} sources reachable (see console)`, ok > 0 ? 'success' : 'danger');
+        })
+        .catch(e => {
+          console.error('Connectivity test failed:', e);
+          showMsg('Test failed', 'danger');
+        });
+    });
+  </script>
+</body>
+</html>

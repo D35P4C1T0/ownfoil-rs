@@ -13,8 +13,37 @@ mod tests {
 
     use crate::auth::{AuthSettings, AuthUser};
     use crate::catalog::{Catalog, ContentFile, ContentKind};
+    use crate::config::TitleDbConfig;
+    use crate::titledb::TitleDb;
 
-    use crate::http::{router, AppState};
+    use crate::http::{router, state::SessionStore, AppState};
+
+    fn test_app_state(
+        catalog: Catalog,
+        library_root: PathBuf,
+        auth: AuthSettings,
+        sessions: SessionStore,
+    ) -> AppState {
+        let data_dir = std::env::temp_dir().join("ownfoil-test");
+        let (progress_tx, _) = tokio::sync::broadcast::channel(1);
+        let titledb = TitleDb::with_progress(
+            TitleDbConfig {
+                enabled: false,
+                ..Default::default()
+            },
+            data_dir.clone(),
+            Some(progress_tx.clone()),
+        );
+        AppState {
+            catalog: Arc::new(RwLock::new(catalog)),
+            library_root,
+            auth: Arc::new(auth),
+            sessions,
+            titledb,
+            data_dir,
+            titledb_progress_tx: progress_tx,
+        }
+    }
 
     #[tokio::test]
     async fn health_returns_ok_with_catalog_count() -> Result<()> {
@@ -26,11 +55,12 @@ mod tests {
             version: None,
             kind: ContentKind::Unknown,
         }]);
-        let state = AppState {
-            catalog: Arc::new(RwLock::new(catalog)),
-            library_root: std::env::temp_dir(),
-            auth: Arc::new(AuthSettings::from_users(Vec::new())),
-        };
+        let state = test_app_state(
+            catalog,
+            std::env::temp_dir(),
+            AuthSettings::from_users(Vec::new()),
+            SessionStore::new(24),
+        );
         let server = TestServer::new(router(state))?;
         let response = server.get("/health").await;
         assert_eq!(response.status_code(), StatusCode::OK);
@@ -46,11 +76,12 @@ mod tests {
         let file_path = dir.path().join("demo.nsp");
         fs::write(&file_path, b"0123456789").await?;
 
-        let state = AppState {
-            catalog: Arc::new(RwLock::new(Catalog::from_files(Vec::new()))),
-            library_root: dir.path().to_path_buf(),
-            auth: Arc::new(AuthSettings::from_users(Vec::new())),
-        };
+        let state = test_app_state(
+            Catalog::from_files(Vec::new()),
+            dir.path().to_path_buf(),
+            AuthSettings::from_users(Vec::new()),
+            SessionStore::new(24),
+        );
 
         let server = TestServer::new(router(state))?;
 
@@ -80,11 +111,12 @@ mod tests {
             kind: ContentKind::Base,
         }]);
 
-        let state = AppState {
-            catalog: Arc::new(RwLock::new(catalog)),
-            library_root: dir.path().to_path_buf(),
-            auth: Arc::new(AuthSettings::from_users(Vec::new())),
-        };
+        let state = test_app_state(
+            catalog,
+            dir.path().to_path_buf(),
+            AuthSettings::from_users(Vec::new()),
+            SessionStore::new(24),
+        );
 
         let server = TestServer::new(router(state))?;
         let response = server
@@ -100,14 +132,15 @@ mod tests {
 
     #[tokio::test]
     async fn catalog_requires_basic_auth_when_enabled() -> Result<()> {
-        let state = AppState {
-            catalog: Arc::new(RwLock::new(Catalog::from_files(Vec::new()))),
-            library_root: std::env::temp_dir(),
-            auth: Arc::new(AuthSettings::from_users(vec![AuthUser {
+        let state = test_app_state(
+            Catalog::from_files(Vec::new()),
+            std::env::temp_dir(),
+            AuthSettings::from_users(vec![AuthUser {
                 username: String::from("admin"),
                 password: String::from("secret"),
-            }])),
-        };
+            }]),
+            SessionStore::new(24),
+        );
 
         let server = TestServer::new(router(state))?;
 
@@ -149,11 +182,12 @@ mod tests {
             kind: ContentKind::Base,
         }]);
 
-        let state = AppState {
-            catalog: Arc::new(RwLock::new(catalog)),
-            library_root: std::env::temp_dir(),
-            auth: Arc::new(AuthSettings::from_users(Vec::new())),
-        };
+        let state = test_app_state(
+            catalog,
+            std::env::temp_dir(),
+            AuthSettings::from_users(Vec::new()),
+            SessionStore::new(24),
+        );
 
         let server = TestServer::new(router(state))?;
         let response = server.get("/shop").await;
@@ -190,11 +224,12 @@ mod tests {
             kind: ContentKind::Base,
         }]);
 
-        let state = AppState {
-            catalog: Arc::new(RwLock::new(catalog)),
-            library_root: std::env::temp_dir(),
-            auth: Arc::new(AuthSettings::from_users(Vec::new())),
-        };
+        let state = test_app_state(
+            catalog,
+            std::env::temp_dir(),
+            AuthSettings::from_users(Vec::new()),
+            SessionStore::new(24),
+        );
 
         let server = TestServer::new(router(state))?;
         let response = server.get("/").await;
@@ -226,11 +261,12 @@ mod tests {
             kind: ContentKind::Base,
         }]);
 
-        let state = AppState {
-            catalog: Arc::new(RwLock::new(catalog)),
-            library_root: std::env::temp_dir(),
-            auth: Arc::new(AuthSettings::from_users(Vec::new())),
-        };
+        let state = test_app_state(
+            catalog,
+            std::env::temp_dir(),
+            AuthSettings::from_users(Vec::new()),
+            SessionStore::new(24),
+        );
 
         let server = TestServer::new(router(state))?;
         let response = server.get("/api/shop/sections").await;
@@ -279,11 +315,12 @@ mod tests {
             kind: ContentKind::Update,
         }]);
 
-        let state = AppState {
-            catalog: Arc::new(RwLock::new(catalog)),
-            library_root: std::env::temp_dir(),
-            auth: Arc::new(AuthSettings::from_users(Vec::new())),
-        };
+        let state = test_app_state(
+            catalog,
+            std::env::temp_dir(),
+            AuthSettings::from_users(Vec::new()),
+            SessionStore::new(24),
+        );
 
         let server = TestServer::new(router(state))?;
         let response = server.get("/api/shop/sections").await;
@@ -317,11 +354,12 @@ mod tests {
             kind: ContentKind::Update,
         }]);
 
-        let state = AppState {
-            catalog: Arc::new(RwLock::new(catalog)),
-            library_root: std::env::temp_dir(),
-            auth: Arc::new(AuthSettings::from_users(Vec::new())),
-        };
+        let state = test_app_state(
+            catalog,
+            std::env::temp_dir(),
+            AuthSettings::from_users(Vec::new()),
+            SessionStore::new(24),
+        );
 
         let server = TestServer::new(router(state))?;
         let response = server.get("/api/shop/sections").await;
@@ -369,11 +407,12 @@ mod tests {
             kind: ContentKind::Dlc,
         }]);
 
-        let state = AppState {
-            catalog: Arc::new(RwLock::new(catalog)),
-            library_root: std::env::temp_dir(),
-            auth: Arc::new(AuthSettings::from_users(Vec::new())),
-        };
+        let state = test_app_state(
+            catalog,
+            std::env::temp_dir(),
+            AuthSettings::from_users(Vec::new()),
+            SessionStore::new(24),
+        );
 
         let server = TestServer::new(router(state))?;
         let response = server.get("/api/shop/sections").await;
@@ -431,11 +470,12 @@ mod tests {
             },
         ]);
 
-        let state = AppState {
-            catalog: Arc::new(RwLock::new(catalog)),
-            library_root: std::env::temp_dir(),
-            auth: Arc::new(AuthSettings::from_users(Vec::new())),
-        };
+        let state = test_app_state(
+            catalog,
+            std::env::temp_dir(),
+            AuthSettings::from_users(Vec::new()),
+            SessionStore::new(24),
+        );
 
         let server = TestServer::new(router(state))?;
         let response = server.get("/api/shop/sections?limit=50").await;
@@ -465,18 +505,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn shop_icon_route_returns_png() -> Result<()> {
-        let state = AppState {
-            catalog: Arc::new(RwLock::new(Catalog::from_files(Vec::new()))),
-            library_root: std::env::temp_dir(),
-            auth: Arc::new(AuthSettings::from_users(Vec::new())),
-        };
+    async fn shop_icon_route_returns_image() -> Result<()> {
+        let state = test_app_state(
+            Catalog::from_files(Vec::new()),
+            std::env::temp_dir(),
+            AuthSettings::from_users(Vec::new()),
+            SessionStore::new(24),
+        );
 
         let server = TestServer::new(router(state))?;
         let response = server.get("/api/shop/icon/0100000000000000.png").await;
 
         assert_eq!(response.status_code(), StatusCode::OK);
-        assert_eq!(response.header("content-type"), "image/png");
+        assert_eq!(response.header("content-type"), "image/svg+xml");
         assert_eq!(
             response.header("cache-control"),
             "public, max-age=604800, immutable"
@@ -486,11 +527,12 @@ mod tests {
 
     #[tokio::test]
     async fn saves_list_endpoint_returns_empty_success_payload() -> Result<()> {
-        let state = AppState {
-            catalog: Arc::new(RwLock::new(Catalog::from_files(Vec::new()))),
-            library_root: std::env::temp_dir(),
-            auth: Arc::new(AuthSettings::from_users(Vec::new())),
-        };
+        let state = test_app_state(
+            Catalog::from_files(Vec::new()),
+            std::env::temp_dir(),
+            AuthSettings::from_users(Vec::new()),
+            SessionStore::new(24),
+        );
 
         let server = TestServer::new(router(state))?;
         let response = server.get("/api/saves/list").await;
