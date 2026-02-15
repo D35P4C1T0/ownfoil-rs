@@ -26,6 +26,10 @@ Barebones Rust port of the core OwnFoil content-server behavior, focused on Cybe
 - Config validation (library root and auth file must exist at startup)
 - Admin web UI at `/admin` for browsing titles (session auth, auth.toml users)
 
+## Development
+
+Before pushing, run `./scripts/setup-hooks.sh` once to enable pre-push checks (fmt, clippy, test). This blocks `git push` if any check fails.
+
 ## Run
 
 ```bash
