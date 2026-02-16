@@ -1,4 +1,5 @@
 use std::convert::Infallible;
+use std::net::IpAddr;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -6,6 +7,7 @@ use std::time::Duration;
 use axum::extract::{FromRequestParts, Path, Query, State};
 use axum::http::request::Parts;
 use axum::http::HeaderMap;
+use axum::http::Request;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
@@ -15,7 +17,8 @@ use axum_extra::extract::Form;
 use futures_util::stream::StreamExt;
 use percent_encoding::percent_decode_str;
 use tower_governor::{
-    governor::GovernorConfigBuilder, key_extractor::GlobalKeyExtractor, GovernorLayer,
+    errors::GovernorError, governor::GovernorConfigBuilder, key_extractor::KeyExtractor,
+    GovernorLayer,
 };
 use tracing::{debug, warn};
 
@@ -33,6 +36,41 @@ const SESSION_COOKIE: &str = "ownfoil_session";
 /// `into_make_service_with_connect_info`). Returns `None` in tests or when
 /// connection info is not set.
 struct PeerAddr(pub Option<SocketAddr>);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ClientKeyExtractor;
+
+impl KeyExtractor for ClientKeyExtractor {
+    type Key = String;
+
+    fn extract<T>(&self, req: &Request<T>) -> Result<Self::Key, GovernorError> {
+        let ip = forwarded_for_ip(req.headers())
+            .or_else(|| x_real_ip(req.headers()))
+            .or_else(|| {
+                req.extensions()
+                    .get::<axum::extract::ConnectInfo<SocketAddr>>()
+                    .map(|addr| addr.ip())
+            })
+            .or_else(|| req.extensions().get::<SocketAddr>().map(SocketAddr::ip))
+            .unwrap_or(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+        Ok(ip.to_string())
+    }
+}
+
+fn forwarded_for_ip(headers: &HeaderMap) -> Option<IpAddr> {
+    headers
+        .get("x-forwarded-for")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.split(',').next())
+        .and_then(|value| value.trim().parse::<IpAddr>().ok())
+}
+
+fn x_real_ip(headers: &HeaderMap) -> Option<IpAddr> {
+    headers
+        .get("x-real-ip")
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.trim().parse::<IpAddr>().ok())
+}
 
 impl<S> FromRequestParts<S> for PeerAddr
 where
@@ -61,16 +99,18 @@ use super::state::AppState;
 
 /// Build the Axum router with all routes, layers (rate limit, request ID, trace), and state.
 pub fn router(state: AppState) -> Router {
-    let governor_conf = Arc::new(
-        GovernorConfigBuilder::default()
-            .per_second(20)
-            .burst_size(50)
-            .key_extractor(GlobalKeyExtractor)
-            .finish()
-            .unwrap_or_else(|| panic!("default governor config is valid")),
-    );
+    let governor_conf = GovernorConfigBuilder::default()
+        .per_second(20)
+        .burst_size(50)
+        .key_extractor(ClientKeyExtractor)
+        .finish()
+        .map(Arc::new);
+    if governor_conf.is_none() {
+        warn!("governor config invalid; rate limiting disabled");
+    }
+    let auth_enabled = state.auth.is_enabled();
 
-    Router::new()
+    let app = Router::new()
         .route("/", get(shop_root))
         .route("/health", get(health))
         .route("/api/catalog", get(catalog_all))
@@ -90,16 +130,22 @@ pub fn router(state: AppState) -> Router {
         .route("/shop", get(shop_root))
         .route("/index", get(catalog_all))
         .route("/titles", get(catalog_all))
-        .route("/download/{*path}", get(download))
-        .route("/admin", get(admin_ui))
-        .route("/admin/settings", get(settings_ui))
-        .route("/admin/login", get(login_page).post(login_post))
-        .route("/admin/logout", get(logout))
-        .route("/api/settings", get(settings_get).post(settings_post))
-        .route("/api/settings/refresh", post(settings_refresh))
-        .route("/api/settings/titledb/progress", get(titledb_progress_sse))
-        .route("/api/settings/titledb/test", get(titledb_test_connectivity))
-        .layer(GovernorLayer::new(governor_conf))
+        .route("/download/{*path}", get(download));
+
+    let app = if auth_enabled {
+        app.route("/admin", get(admin_ui))
+            .route("/admin/settings", get(settings_ui))
+            .route("/admin/login", get(login_page).post(login_post))
+            .route("/admin/logout", get(logout))
+            .route("/api/settings", get(settings_get).post(settings_post))
+            .route("/api/settings/refresh", post(settings_refresh))
+            .route("/api/settings/titledb/progress", get(titledb_progress_sse))
+            .route("/api/settings/titledb/test", get(titledb_test_connectivity))
+    } else {
+        app
+    };
+
+    let app = app
         .layer(tower_http::request_id::SetRequestIdLayer::new(
             axum::http::header::HeaderName::from_static("x-request-id"),
             tower_http::request_id::MakeRequestUuid,
@@ -108,7 +154,13 @@ pub fn router(state: AppState) -> Router {
             axum::http::header::HeaderName::from_static("x-request-id"),
         ))
         .layer(tower_http::trace::TraceLayer::new_for_http())
-        .with_state(state)
+        .with_state(state);
+
+    if let Some(governor_conf) = governor_conf {
+        app.layer(GovernorLayer::new(governor_conf))
+    } else {
+        app
+    }
 }
 
 async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
@@ -117,6 +169,14 @@ async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
         status: "ok",
         catalog_files: Some(catalog_files),
     })
+}
+
+fn ensure_admin_enabled(state: &AppState) -> Result<(), ApiError> {
+    if state.auth.is_enabled() {
+        Ok(())
+    } else {
+        Err(ApiError::NotFound)
+    }
 }
 
 async fn shop_root(
@@ -392,9 +452,7 @@ struct LoginForm {
 }
 
 async fn login_page(State(state): State<AppState>, jar: CookieJar) -> Result<Response, ApiError> {
-    if !state.auth.is_enabled() {
-        return Err(ApiError::NotFound);
-    }
+    ensure_admin_enabled(&state)?;
     if jar
         .get(SESSION_COOKIE)
         .and_then(|c| state.sessions.get(c.value()))
@@ -410,9 +468,7 @@ async fn login_post(
     jar: CookieJar,
     Form(form): Form<LoginForm>,
 ) -> Result<(CookieJar, Redirect), ApiError> {
-    if !state.auth.is_enabled() {
-        return Err(ApiError::NotFound);
-    }
+    ensure_admin_enabled(&state)?;
     if !state.auth.is_authorized(&form.username, &form.password) {
         return Ok((jar, Redirect::to("/admin/login?error=1")));
     }
@@ -420,6 +476,7 @@ async fn login_post(
     let cookie = Cookie::build((SESSION_COOKIE, token))
         .path("/")
         .http_only(true)
+        .secure(!state.insecure_admin_cookie)
         .same_site(cookie::SameSite::Lax)
         .max_age(cookie::time::Duration::hours(24))
         .build();
@@ -427,9 +484,7 @@ async fn login_post(
 }
 
 async fn admin_ui(State(state): State<AppState>, jar: CookieJar) -> Result<Response, ApiError> {
-    if !state.auth.is_enabled() {
-        return Err(ApiError::NotFound);
-    }
+    ensure_admin_enabled(&state)?;
     let session_valid = jar
         .get(SESSION_COOKIE)
         .and_then(|c| state.sessions.get(c.value()))
@@ -444,9 +499,7 @@ async fn logout(
     State(state): State<AppState>,
     jar: CookieJar,
 ) -> Result<(CookieJar, Redirect), ApiError> {
-    if !state.auth.is_enabled() {
-        return Err(ApiError::NotFound);
-    }
+    ensure_admin_enabled(&state)?;
     if let Some(c) = jar.get(SESSION_COOKIE) {
         state.sessions.remove(c.value());
     }
@@ -457,9 +510,7 @@ async fn logout(
 }
 
 async fn settings_ui(State(state): State<AppState>, jar: CookieJar) -> Result<Response, ApiError> {
-    if !state.auth.is_enabled() {
-        return Err(ApiError::NotFound);
-    }
+    ensure_admin_enabled(&state)?;
     let session_valid = jar
         .get(SESSION_COOKIE)
         .and_then(|c| state.sessions.get(c.value()))
@@ -487,6 +538,7 @@ async fn settings_get(
     jar: CookieJar,
     headers: HeaderMap,
 ) -> Result<Json<SettingsResponse>, ApiError> {
+    ensure_admin_enabled(&state)?;
     ensure_authorized(&state, &headers, jar.get(SESSION_COOKIE).map(|c| c.value()))?;
     let titledb = state.titledb.config().await;
     let entries = state.titledb.entry_count().await;
@@ -508,6 +560,7 @@ async fn settings_post(
     headers: HeaderMap,
     Json(body): Json<SettingsPost>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    ensure_admin_enabled(&state)?;
     ensure_authorized(&state, &headers, jar.get(SESSION_COOKIE).map(|c| c.value()))?;
     if let Some(titledb) = body.titledb {
         state.titledb.set_config(titledb.clone()).await;
@@ -524,6 +577,7 @@ async fn titledb_progress_sse(
     jar: CookieJar,
     headers: HeaderMap,
 ) -> Result<Sse<impl futures_util::Stream<Item = Result<Event, Infallible>> + Send>, ApiError> {
+    ensure_admin_enabled(&state)?;
     ensure_authorized(&state, &headers, jar.get(SESSION_COOKIE).map(|c| c.value()))?;
     let rx = state.titledb_progress_tx.subscribe();
     let stream = tokio_stream::wrappers::BroadcastStream::new(rx).map(|r| match r {
@@ -546,6 +600,7 @@ async fn titledb_test_connectivity(
     jar: CookieJar,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    ensure_admin_enabled(&state)?;
     ensure_authorized(&state, &headers, jar.get(SESSION_COOKIE).map(|c| c.value()))?;
     let config = state.titledb.config().await;
     let region = &config.region;
@@ -608,6 +663,7 @@ async fn settings_refresh(
     jar: CookieJar,
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    ensure_admin_enabled(&state)?;
     ensure_authorized(&state, &headers, jar.get(SESSION_COOKIE).map(|c| c.value()))?;
     state.titledb.refresh();
     Ok(Json(serde_json::json!({ "success": true })))

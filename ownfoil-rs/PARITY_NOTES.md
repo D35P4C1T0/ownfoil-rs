@@ -16,6 +16,8 @@
   - `Authorization: Basic <base64(username:password)>`
 - Config-based auth via separate credentials file (`auth_file` with `username`/`password` and optional `[[users]]`)
 - Private-by-default startup policy (auth file required unless `OWNFOIL_PUBLIC=true`)
+- Public mode disables admin/settings routes
+- Admin session cookie is `Secure` by default (override via `OWNFOIL_INSECURE_ADMIN_COOKIE=true`)
 - Endpoint aliases for compatibility (`/shop`, `/index`, `/titles`, and `/api/*` variants)
 - Shop sections now mirror Ownfoil/CyberFoil behavior by deduplicating updates and DLC to latest version per content id
 
