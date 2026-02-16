@@ -64,6 +64,7 @@ async fn main() -> anyhow::Result<()> {
         bind = %config.bind,
         root = %config.library_root.display(),
         public_shop = config.public_shop,
+        insecure_admin_cookie = config.insecure_admin_cookie,
         auth_enabled = auth.is_enabled(),
         auth_user_count = auth.user_count(),
         auth_file = ?config.auth_file.as_ref().map(|path| path.display().to_string()),
@@ -111,6 +112,7 @@ async fn main() -> anyhow::Result<()> {
         catalog,
         library_root: config.library_root,
         auth: Arc::new(auth),
+        insecure_admin_cookie: config.insecure_admin_cookie,
         sessions: SessionStore::new(24),
         titledb,
         data_dir: config.data_dir,
@@ -126,6 +128,11 @@ async fn main() -> anyhow::Result<()> {
         tracing::warn!(
             bind = %config.bind,
             "binding to loopback; use --bind 0.0.0.0:8465 for LAN access"
+        );
+    }
+    if config.insecure_admin_cookie {
+        tracing::warn!(
+            "OWNFOIL_INSECURE_ADMIN_COOKIE=true; admin session cookie will be sent over HTTP"
         );
     }
 

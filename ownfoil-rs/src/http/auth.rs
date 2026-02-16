@@ -37,11 +37,12 @@ pub fn extract_basic_auth(headers: &HeaderMap) -> Option<(String, String)> {
     let raw = headers
         .get(AUTHORIZATION)
         .and_then(|value| value.to_str().ok())?;
-    let encoded = raw
-        .strip_prefix("Basic ")
-        .or_else(|| raw.strip_prefix("basic "))
-        .map(str::trim)
-        .unwrap_or_else(|| raw.trim());
+    let mut parts = raw.split_whitespace();
+    let scheme = parts.next()?;
+    let encoded = parts.next()?;
+    if !scheme.eq_ignore_ascii_case("basic") || parts.next().is_some() {
+        return None;
+    }
     let decoded = BASE64_STANDARD.decode(encoded).ok()?;
     let credentials = String::from_utf8(decoded).ok()?;
     let (username, password) = credentials.split_once(':')?;

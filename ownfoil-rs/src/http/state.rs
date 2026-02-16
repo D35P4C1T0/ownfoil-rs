@@ -52,6 +52,7 @@ pub struct AppState {
     pub catalog: Arc<RwLock<Catalog>>,
     pub library_root: PathBuf,
     pub auth: Arc<AuthSettings>,
+    pub insecure_admin_cookie: bool,
     pub sessions: SessionStore,
     pub titledb: TitleDb,
     pub data_dir: PathBuf,

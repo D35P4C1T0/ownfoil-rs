@@ -15,8 +15,10 @@ Barebones Rust port of the core OwnFoil content-server behavior, focused on Cybe
 - Minimal HTTP API for shop/catalog/title-version browsing
 - File streaming with single-range `Range` support (`206 Partial Content`)
 - Optional HTTP Basic auth (`Authorization: Basic ...`) with constant-time password comparison
+- Strict HTTP Basic scheme parsing (`Authorization` must use `Basic <base64>`)
 - Dedicated auth credentials file support (`--auth-file`); warns if file is world-readable (Unix)
 - Private-by-default startup (requires auth file unless public mode is explicitly enabled)
+- Admin session cookie uses `Secure` by default (set `OWNFOIL_INSECURE_ADMIN_COOKIE=true` only for non-TLS admin access)
 - Recursive scan of a content library root (`.nsp`, `.xci`, `.nsz`, `.xcz`) via `walkdir`
 - Background catalog refresh interval with panic recovery
 - CyberFoil-compatible shop endpoints (`/`, `/api/shop/sections`, `/api/get_game/:id`)
@@ -71,6 +73,7 @@ bind = "0.0.0.0:8465"
 library_root = "./library"
 auth_file = "./auth.toml"
 scan_interval_seconds = 30
+insecure_admin_cookie = false
 ```
 
 Example credentials file is included at `ownfoil-rs/auth.example.toml`.
@@ -111,6 +114,8 @@ The same setting works in compose through `.env`:
 ```bash
 OWNFOIL_PUBLIC=true
 ```
+
+In public mode, admin and settings endpoints are not exposed.
 
 ## Expected Library Structure
 

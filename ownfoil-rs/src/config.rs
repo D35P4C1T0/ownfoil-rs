@@ -45,6 +45,7 @@ pub struct AppConfig {
     pub library_root: PathBuf,
     pub auth_file: Option<PathBuf>,
     pub public_shop: bool,
+    pub insecure_admin_cookie: bool,
     pub scan_interval_seconds: u64,
     pub data_dir: PathBuf,
     pub titledb: TitleDbConfig,
@@ -107,6 +108,7 @@ struct FileConfig {
     library_root: Option<PathBuf>,
     auth_file: Option<PathBuf>,
     public_shop: Option<bool>,
+    insecure_admin_cookie: Option<bool>,
     scan_interval_seconds: Option<u64>,
     titledb: Option<TitleDbConfig>,
 }
@@ -117,6 +119,7 @@ impl AppConfig {
         let from_file = read_file_config(config_path)?;
         let from_runtime = read_runtime_config(config_path)?;
         let env_public_shop = read_public_shop_env()?;
+        let env_insecure_admin_cookie = read_insecure_admin_cookie_env()?;
 
         let bind = cli
             .bind
@@ -128,6 +131,9 @@ impl AppConfig {
             .unwrap_or_else(|| PathBuf::from("./library"));
         let auth_file = cli.auth_file.or(from_file.auth_file);
         let public_shop = env_public_shop.or(from_file.public_shop).unwrap_or(false);
+        let insecure_admin_cookie = env_insecure_admin_cookie
+            .or(from_file.insecure_admin_cookie)
+            .unwrap_or(false);
         let scan_interval_seconds = cli
             .scan_interval_seconds
             .or(from_file.scan_interval_seconds)
@@ -146,6 +152,7 @@ impl AppConfig {
             library_root: library_root.clone(),
             auth_file,
             public_shop,
+            insecure_admin_cookie,
             scan_interval_seconds,
             data_dir,
             titledb,
@@ -223,6 +230,10 @@ fn read_public_shop_env() -> Result<Option<bool>, ConfigError> {
         return Ok(Some(value));
     }
     read_env_bool("OWNFOIL_SHOP_PUBLIC")
+}
+
+fn read_insecure_admin_cookie_env() -> Result<Option<bool>, ConfigError> {
+    read_env_bool("OWNFOIL_INSECURE_ADMIN_COOKIE")
 }
 
 fn read_env_bool(key: &str) -> Result<Option<bool>, ConfigError> {

@@ -25,6 +25,16 @@ mod tests {
         auth: AuthSettings,
         sessions: SessionStore,
     ) -> AppState {
+        test_app_state_with_cookie_mode(catalog, library_root, auth, sessions, false)
+    }
+
+    fn test_app_state_with_cookie_mode(
+        catalog: Catalog,
+        library_root: PathBuf,
+        auth: AuthSettings,
+        sessions: SessionStore,
+        insecure_admin_cookie: bool,
+    ) -> AppState {
         let data_dir = std::env::temp_dir().join("ownfoil-test");
         let (progress_tx, _) = tokio::sync::broadcast::channel(1);
         let titledb = TitleDb::with_progress(
@@ -39,6 +49,7 @@ mod tests {
             catalog: Arc::new(RwLock::new(catalog)),
             library_root,
             auth: Arc::new(auth),
+            insecure_admin_cookie,
             sessions,
             titledb,
             data_dir,
@@ -171,7 +182,75 @@ mod tests {
             .get("/api/catalog")
             .add_header("Authorization", "YWRtaW46c2VjcmV0")
             .await;
-        assert_eq!(authorized.status_code(), StatusCode::OK);
+        assert_eq!(authorized.status_code(), StatusCode::UNAUTHORIZED);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn settings_routes_are_unavailable_when_auth_disabled() -> Result<()> {
+        let state = test_app_state(
+            Catalog::from_files(Vec::new()),
+            std::env::temp_dir(),
+            AuthSettings::from_users(Vec::new()),
+            SessionStore::new(24),
+        );
+
+        let server = TestServer::new(router(state))?;
+        let settings = server.get("/api/settings").await;
+        assert_eq!(settings.status_code(), StatusCode::NOT_FOUND);
+        let login = server.get("/admin/login").await;
+        assert_eq!(login.status_code(), StatusCode::NOT_FOUND);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn admin_login_sets_secure_cookie_by_default() -> Result<()> {
+        let state = test_app_state(
+            Catalog::from_files(Vec::new()),
+            std::env::temp_dir(),
+            AuthSettings::from_users(vec![AuthUser {
+                username: String::from("admin"),
+                password: String::from("secret"),
+            }]),
+            SessionStore::new(24),
+        );
+
+        let server = TestServer::new(router(state))?;
+        let response = server
+            .post("/admin/login")
+            .content_type("application/x-www-form-urlencoded")
+            .bytes("username=admin&password=secret".into())
+            .await;
+        assert_eq!(response.status_code(), StatusCode::SEE_OTHER);
+        let set_cookie = response.header("set-cookie");
+        let set_cookie = set_cookie.to_str().unwrap_or_default();
+        assert!(set_cookie.contains("Secure"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn admin_login_allows_insecure_cookie_when_configured() -> Result<()> {
+        let state = test_app_state_with_cookie_mode(
+            Catalog::from_files(Vec::new()),
+            std::env::temp_dir(),
+            AuthSettings::from_users(vec![AuthUser {
+                username: String::from("admin"),
+                password: String::from("secret"),
+            }]),
+            SessionStore::new(24),
+            true,
+        );
+
+        let server = TestServer::new(router(state))?;
+        let response = server
+            .post("/admin/login")
+            .content_type("application/x-www-form-urlencoded")
+            .bytes("username=admin&password=secret".into())
+            .await;
+        assert_eq!(response.status_code(), StatusCode::SEE_OTHER);
+        let set_cookie = response.header("set-cookie");
+        let set_cookie = set_cookie.to_str().unwrap_or_default();
+        assert!(!set_cookie.contains("Secure"));
         Ok(())
     }
 
