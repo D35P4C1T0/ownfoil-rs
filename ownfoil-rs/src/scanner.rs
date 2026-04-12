@@ -11,7 +11,7 @@ use tracing::info;
 use walkdir::WalkDir;
 
 use crate::catalog::{
-    classify_title_id, parse_filename_metadata, to_display_title_id, ContentFile,
+    ContentFile, classify_title_id, parse_filename_metadata, to_display_title_id,
 };
 
 #[derive(Debug, Error)]
@@ -19,15 +19,9 @@ pub enum ScanError {
     #[error("library root does not exist: {0}")]
     MissingRoot(String),
     #[error("failed to walk {path}: {source}")]
-    Walk {
-        path: String,
-        source: std::io::Error,
-    },
+    Walk { path: String, source: std::io::Error },
     #[error("failed to read metadata for {path}: {source}")]
-    Metadata {
-        path: String,
-        source: std::io::Error,
-    },
+    Metadata { path: String, source: std::io::Error },
     #[error("failed to normalize path for {path}")]
     NormalizePath { path: String },
 }
@@ -39,12 +33,9 @@ pub enum ScanError {
 pub async fn scan_library(root: &Path) -> Result<Vec<ContentFile>, ScanError> {
     let root_path = root.to_path_buf();
     let path_display = root_path.display().to_string();
-    tokio::task::spawn_blocking(move || scan_library_sync(&root_path))
-        .await
-        .map_err(|e| ScanError::Walk {
-            path: path_display,
-            source: std::io::Error::other(e.to_string()),
-        })?
+    tokio::task::spawn_blocking(move || scan_library_sync(&root_path)).await.map_err(|e| {
+        ScanError::Walk { path: path_display, source: std::io::Error::other(e.to_string()) }
+    })?
 }
 
 fn scan_library_sync(root: &Path) -> Result<Vec<ContentFile>, ScanError> {
@@ -55,11 +46,7 @@ fn scan_library_sync(root: &Path) -> Result<Vec<ContentFile>, ScanError> {
 
     let mut out = Vec::new();
 
-    for entry in WalkDir::new(root)
-        .follow_links(false)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
+    for entry in WalkDir::new(root).follow_links(false).into_iter().filter_map(Result::ok) {
         let path = entry.path();
         if !entry.file_type().is_file() {
             continue;
@@ -69,23 +56,18 @@ fn scan_library_sync(root: &Path) -> Result<Vec<ContentFile>, ScanError> {
             continue;
         }
 
-        let metadata = std::fs::metadata(path).map_err(|source| ScanError::Metadata {
-            path: path.display().to_string(),
-            source,
-        })?;
+        let metadata = std::fs::metadata(path)
+            .map_err(|source| ScanError::Metadata { path: path.display().to_string(), source })?;
 
         let relative_path = path
             .strip_prefix(root)
             .map(Path::to_path_buf)
-            .map_err(|_| ScanError::NormalizePath {
-                path: path.display().to_string(),
-            })?;
+            .map_err(|_| ScanError::NormalizePath { path: path.display().to_string() })?;
 
         let name = relative_path
             .file_name()
             .and_then(OsStr::to_str)
-            .map(String::from)
-            .unwrap_or_else(|| relative_path.display().to_string());
+            .map_or_else(|| relative_path.display().to_string(), String::from);
 
         let parsed_name = parse_filename_metadata(&name);
         let rel = relative_path.to_string_lossy();
@@ -117,15 +99,9 @@ fn scan_library_sync(root: &Path) -> Result<Vec<ContentFile>, ScanError> {
 }
 
 pub fn is_supported_content(path: &Path) -> bool {
-    path.extension()
-        .and_then(OsStr::to_str)
-        .map(|extension| {
-            matches!(
-                extension.to_ascii_lowercase().as_str(),
-                "nsp" | "xci" | "nsz" | "xcz"
-            )
-        })
-        .unwrap_or(false)
+    path.extension().and_then(OsStr::to_str).is_some_and(|extension| {
+        matches!(extension.to_ascii_lowercase().as_str(), "nsp" | "xci" | "nsz" | "xcz")
+    })
 }
 
 #[cfg(test)]
@@ -151,11 +127,8 @@ mod tests {
     #[tokio::test]
     async fn scan_library_detects_dlc_in_nested_directories() -> Result<()> {
         let dir = tempdir()?;
-        let nested = dir
-            .path()
-            .join("Some Game")
-            .join("DLC")
-            .join("my_dlc_[0100ABCD12341001][v0].nsp");
+        let nested =
+            dir.path().join("Some Game").join("DLC").join("my_dlc_[0100ABCD12341001][v0].nsp");
         if let Some(parent) = nested.parent() {
             fs::create_dir_all(parent).await?;
         }
@@ -172,11 +145,7 @@ mod tests {
     #[tokio::test]
     async fn scan_library_parses_title_id_from_parent_directory_path() -> Result<()> {
         let dir = tempdir()?;
-        let nested = dir
-            .path()
-            .join("Game_[0100ABCD12340000]")
-            .join("content")
-            .join("file.nsp");
+        let nested = dir.path().join("Game_[0100ABCD12340000]").join("content").join("file.nsp");
         if let Some(parent) = nested.parent() {
             fs::create_dir_all(parent).await?;
         }

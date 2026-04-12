@@ -3,13 +3,14 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use dashmap::DashMap;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock, broadcast};
 
 use crate::auth::AuthSettings;
 use crate::catalog::Catalog;
+use crate::shop::ShopConfig;
 use crate::titledb::TitleDb;
 
-/// Session token -> (username, expires_at). Sessions expire after 24 hours.
+/// Session token -> (username, `expires_at`). Sessions expire after 24 hours.
 #[derive(Debug, Clone)]
 pub struct SessionStore {
     inner: Arc<DashMap<String, (String, Instant)>>,
@@ -18,10 +19,7 @@ pub struct SessionStore {
 
 impl SessionStore {
     pub fn new(ttl_hours: u64) -> Self {
-        Self {
-            inner: Arc::new(DashMap::new()),
-            ttl: Duration::from_secs(ttl_hours * 3600),
-        }
+        Self { inner: Arc::new(DashMap::new()), ttl: Duration::from_secs(ttl_hours * 3600) }
     }
 
     pub fn create(&self, username: String) -> String {
@@ -52,6 +50,7 @@ pub struct AppState {
     pub catalog: Arc<RwLock<Catalog>>,
     pub library_root: PathBuf,
     pub auth: Arc<AuthSettings>,
+    pub shop: Arc<ShopConfig>,
     pub insecure_admin_cookie: bool,
     pub sessions: SessionStore,
     pub titledb: TitleDb,

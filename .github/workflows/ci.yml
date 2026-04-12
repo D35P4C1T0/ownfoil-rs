@@ -32,7 +32,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo -A clippy::multiple_crate_versions -D clippy::dbg_macro -D clippy::todo -D clippy::unimplemented -D clippy::print_stdout -D clippy::print_stderr -D clippy::wildcard_imports
 
       - name: Test
         run: cargo test --workspace --locked

@@ -6,15 +6,18 @@ rust-version = "1.80"
 description = "Barebones CyberFoil-compatible Tinfoil game server in Rust"
 readme = "README.md"
 license = "MIT"
+repository = "https://github.com/D35P4C1T0/ownfoil-rs"
 keywords = ["tinfoil", "cyberfoil", "shop", "switch", "server"]
 categories = ["command-line-utilities", "network-programming"]
 
 [dependencies]
 anyhow = "1.0"
+aes = "0.8"
 axum = { version = "0.8", features = ["json", "macros"] }
 axum-extra = { version = "0.12", features = ["cookie", "form"] }
 bytes = "1.0"
 base64 = "0.22"
+cipher = "0.4"
 subtle = "2.5"
 clap = { version = "4.5", features = ["derive"] }
 cookie = "0.18"
@@ -37,8 +40,12 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 uuid = { version = "1.0", features = ["v4"] }
 reqwest = { version = "0.12", features = ["json"] }
 humantime = "2.1"
+rand = "0.8"
+rsa = { version = "0.9", features = ["pem", "sha2"] }
+sha2 = "0.10"
 zip = "2.2"
 tokio-stream = { version = "0.1", features = ["sync"] }
+zstd = "0.13"
 
 [dev-dependencies]
 axum-test = "18.2"

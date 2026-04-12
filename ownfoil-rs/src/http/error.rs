@@ -1,7 +1,7 @@
+use axum::Json;
 use axum::http::header::WWW_AUTHENTICATE;
 use axum::http::{HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -21,18 +21,18 @@ pub enum ApiError {
 }
 
 impl ApiError {
-    pub fn status(&self) -> StatusCode {
+    pub const fn status(&self) -> StatusCode {
         match self {
-            ApiError::Unauthorized => StatusCode::UNAUTHORIZED,
-            ApiError::TitleNotFound | ApiError::NotFound => StatusCode::NOT_FOUND,
-            ApiError::InvalidPath => StatusCode::BAD_REQUEST,
-            ApiError::InvalidRange => StatusCode::RANGE_NOT_SATISFIABLE,
-            ApiError::Internal => StatusCode::INTERNAL_SERVER_ERROR,
+            Self::Unauthorized => StatusCode::UNAUTHORIZED,
+            Self::TitleNotFound | Self::NotFound => StatusCode::NOT_FOUND,
+            Self::InvalidPath => StatusCode::BAD_REQUEST,
+            Self::InvalidRange => StatusCode::RANGE_NOT_SATISFIABLE,
+            Self::Internal => StatusCode::INTERNAL_SERVER_ERROR,
         }
     }
 
-    pub fn is_unauthorized(&self) -> bool {
-        matches!(self, ApiError::Unauthorized)
+    pub const fn is_unauthorized(&self) -> bool {
+        matches!(self, Self::Unauthorized)
     }
 }
 
@@ -41,10 +41,9 @@ impl IntoResponse for ApiError {
         let body = Json(serde_json::json!({ "error": self.to_string() }));
         let mut response = (self.status(), body).into_response();
         if self.is_unauthorized() {
-            response.headers_mut().insert(
-                WWW_AUTHENTICATE,
-                HeaderValue::from_static("Basic realm=\"ownfoil-rs\""),
-            );
+            response
+                .headers_mut()
+                .insert(WWW_AUTHENTICATE, HeaderValue::from_static("Basic realm=\"ownfoil-rs\""));
         }
         response
     }

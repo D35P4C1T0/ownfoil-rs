@@ -7,6 +7,6 @@ if ! git diff --quiet; then
     echo "Code was reformatted. Run: git add -A && git commit -m 'Apply rustfmt' && git push"
     exit 1
 fi
-cargo clippy --workspace --all-targets --locked -- -D warnings
+cargo clippy --workspace --all-targets --locked -- -D warnings -W clippy::pedantic -W clippy::nursery -W clippy::cargo -A clippy::multiple_crate_versions -D clippy::dbg_macro -D clippy::todo -D clippy::unimplemented -D clippy::print_stdout -D clippy::print_stderr -D clippy::wildcard_imports
 cargo test --workspace --locked
 echo "All checks passed."
