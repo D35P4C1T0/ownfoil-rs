@@ -1,22 +1,21 @@
 use std::collections::HashMap;
 
-use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
+use axum::body::Body;
+use axum::http::HeaderValue;
+use axum::http::header::CONTENT_TYPE;
+use axum::response::Response;
+use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 use serde::{Deserialize, Serialize};
 
 use crate::catalog::{ContentFile, ContentKind};
 use crate::serve_files::FileServeError;
+use crate::shop::{ShopConfig, encrypt_shop_payload};
 use crate::titledb::{TitleDb, TitleInfo};
 
 use super::error::ApiError;
 
-const PATH_SEGMENT_ENCODE_SET: &AsciiSet = &CONTROLS
-    .add(b' ')
-    .add(b'"')
-    .add(b'#')
-    .add(b'%')
-    .add(b'?')
-    .add(b'{')
-    .add(b'}');
+const PATH_SEGMENT_ENCODE_SET: &AsciiSet =
+    &CONTROLS.add(b' ').add(b'"').add(b'#').add(b'%').add(b'?').add(b'{').add(b'}');
 
 #[derive(Debug, Serialize)]
 pub struct HealthResponse {
@@ -67,7 +66,7 @@ pub struct SectionInfo {
 
 #[derive(Debug, Serialize)]
 pub struct ShopRootResponse {
-    pub success: &'static str,
+    pub success: String,
     pub files: Vec<ShopRootFile>,
 }
 
@@ -169,7 +168,7 @@ pub struct SavedItem {
 
 impl From<&ApiEntry> for ShopFile {
     fn from(entry: &ApiEntry) -> Self {
-        ShopFile {
+        Self {
             id: entry.id.clone(),
             url: entry.url.clone(),
             size: entry.size,
@@ -238,6 +237,29 @@ pub fn build_shop_root_files(files: &[ContentFile]) -> Vec<ShopRootFile> {
         .collect()
 }
 
+pub fn respond_with_shop_payload<T: Serialize>(
+    payload: &T,
+    shop: &ShopConfig,
+) -> Result<Response, ApiError> {
+    let (body, encrypted) = if shop.effective_encrypt() {
+        let bytes = encrypt_shop_payload(payload, Some(shop.public_key_pem()))
+            .map_err(|_| ApiError::Internal)?;
+        (bytes, true)
+    } else {
+        let bytes = serde_json::to_vec(payload).map_err(|_| ApiError::Internal)?;
+        (bytes, false)
+    };
+
+    let mut response = Response::new(Body::from(body));
+    let content_type = if encrypted {
+        HeaderValue::from_static("application/octet-stream")
+    } else {
+        HeaderValue::from_static("application/json")
+    };
+    response.headers_mut().insert(CONTENT_TYPE, content_type);
+    Ok(response)
+}
+
 pub async fn build_shop_sections_payload(
     files: &[ContentFile],
     limit: usize,
@@ -252,9 +274,8 @@ pub async fn build_shop_sections_payload(
         collect_latest_by_key(&indexed, ContentKind::Update, &title_map, |item| {
             item.title_id.clone().unwrap_or_else(|| item.app_id.clone())
         });
-    let dlc_items_full = collect_latest_by_key(&indexed, ContentKind::Dlc, &title_map, |item| {
-        item.app_id.clone()
-    });
+    let dlc_items_full =
+        collect_latest_by_key(&indexed, ContentKind::Dlc, &title_map, |item| item.app_id.clone());
 
     let mut all_items: Vec<_> = base_items
         .iter()
@@ -279,13 +300,7 @@ pub async fn build_shop_sections_payload(
 
     ShopSectionsResponse {
         sections: vec![
-            ShopSection {
-                id: "new",
-                title: "New",
-                items: new_items,
-                total: None,
-                truncated: None,
-            },
+            ShopSection { id: "new", title: "New", items: new_items, total: None, truncated: None },
             ShopSection {
                 id: "recommended",
                 title: "Recommended",
@@ -382,22 +397,12 @@ fn to_shop_section_item(
     file: &ContentFile,
     title_map: &HashMap<String, TitleInfo>,
 ) -> ShopSectionItem {
-    let app_id = file
-        .title_id
-        .as_ref()
-        .map(String::from)
-        .unwrap_or_else(|| file.name.clone());
+    let app_id = file.title_id.as_ref().map_or_else(|| file.name.clone(), String::from);
     let base_title_id = derive_base_title_id(file.kind, file.title_id.as_deref());
     let icon_url = base_title_id.as_ref().map_or(String::new(), |tid| {
-        title_map
-            .get(tid)
-            .and_then(|t| t.icon_url.clone())
-            .unwrap_or_else(|| shop_icon_url(tid))
+        title_map.get(tid).and_then(|t| t.icon_url.clone()).unwrap_or_else(|| shop_icon_url(tid))
     });
-    let app_version = file
-        .version
-        .map(|v| v.to_string())
-        .unwrap_or_else(|| String::from("0"));
+    let app_version = file.version.map_or_else(|| String::from("0"), |v| v.to_string());
 
     ShopSectionItem {
         name: file.name.clone(),
@@ -417,7 +422,7 @@ fn to_shop_section_item(
     }
 }
 
-fn app_type_for_kind(kind: ContentKind) -> &'static str {
+const fn app_type_for_kind(kind: ContentKind) -> &'static str {
     match kind {
         ContentKind::Base | ContentKind::Unknown => "BASE",
         ContentKind::Update => "UPDATE",
@@ -465,26 +470,11 @@ fn shop_icon_url(title_id: &str) -> String {
 
 pub fn catalog_sections() -> Vec<SectionInfo> {
     vec![
-        SectionInfo {
-            id: "new",
-            label: "New",
-        },
-        SectionInfo {
-            id: "recommended",
-            label: "Recommended",
-        },
-        SectionInfo {
-            id: "updates",
-            label: "Updates",
-        },
-        SectionInfo {
-            id: "dlc",
-            label: "DLC",
-        },
-        SectionInfo {
-            id: "all",
-            label: "All",
-        },
+        SectionInfo { id: "new", label: "New" },
+        SectionInfo { id: "recommended", label: "Recommended" },
+        SectionInfo { id: "updates", label: "Updates" },
+        SectionInfo { id: "dlc", label: "DLC" },
+        SectionInfo { id: "all", label: "All" },
     ]
 }
 
@@ -501,21 +491,18 @@ const PLACEHOLDER_SVG: &str = r##"<svg xmlns="http://www.w3.org/2000/svg" width=
 
 pub fn static_png_response() -> axum::response::Response {
     use axum::body::Body;
-    use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
     use axum::http::HeaderValue;
+    use axum::http::header::{CACHE_CONTROL, CONTENT_TYPE};
 
     let mut response = axum::response::Response::new(Body::from(PLACEHOLDER_SVG));
+    response.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("image/svg+xml"));
     response
         .headers_mut()
-        .insert(CONTENT_TYPE, HeaderValue::from_static("image/svg+xml"));
-    response.headers_mut().insert(
-        CACHE_CONTROL,
-        HeaderValue::from_static("public, max-age=604800, immutable"),
-    );
+        .insert(CACHE_CONTROL, HeaderValue::from_static("public, max-age=604800, immutable"));
     response
 }
 
-pub fn map_file_error(error: FileServeError) -> ApiError {
+pub const fn map_file_error(error: &FileServeError) -> ApiError {
     match error {
         FileServeError::InvalidPath => ApiError::InvalidPath,
         FileServeError::NotFound => ApiError::NotFound,

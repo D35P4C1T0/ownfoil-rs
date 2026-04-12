@@ -15,9 +15,10 @@ mod tests {
     use crate::auth::{AuthSettings, AuthUser};
     use crate::catalog::{Catalog, ContentFile, ContentKind};
     use crate::config::TitleDbConfig;
+    use crate::shop::ShopConfig;
     use crate::titledb::TitleDb;
 
-    use crate::http::{router, state::SessionStore, AppState};
+    use crate::http::{AppState, router, state::SessionStore};
 
     fn test_app_state(
         catalog: Catalog,
@@ -25,7 +26,14 @@ mod tests {
         auth: AuthSettings,
         sessions: SessionStore,
     ) -> AppState {
-        test_app_state_with_cookie_mode(catalog, library_root, auth, sessions, false)
+        test_app_state_with_options(
+            catalog,
+            library_root,
+            auth,
+            sessions,
+            false,
+            ShopConfig::default(),
+        )
     }
 
     fn test_app_state_with_cookie_mode(
@@ -35,13 +43,28 @@ mod tests {
         sessions: SessionStore,
         insecure_admin_cookie: bool,
     ) -> AppState {
+        test_app_state_with_options(
+            catalog,
+            library_root,
+            auth,
+            sessions,
+            insecure_admin_cookie,
+            ShopConfig::default(),
+        )
+    }
+
+    fn test_app_state_with_options(
+        catalog: Catalog,
+        library_root: PathBuf,
+        auth: AuthSettings,
+        sessions: SessionStore,
+        insecure_admin_cookie: bool,
+        shop: ShopConfig,
+    ) -> AppState {
         let data_dir = std::env::temp_dir().join("ownfoil-test");
         let (progress_tx, _) = tokio::sync::broadcast::channel(1);
         let titledb = TitleDb::with_progress(
-            TitleDbConfig {
-                enabled: false,
-                ..Default::default()
-            },
+            TitleDbConfig { enabled: false, ..Default::default() },
             data_dir.clone(),
             Some(progress_tx.clone()),
         );
@@ -49,6 +72,7 @@ mod tests {
             catalog: Arc::new(RwLock::new(catalog)),
             library_root,
             auth: Arc::new(auth),
+            shop: Arc::new(shop),
             insecure_admin_cookie,
             sessions,
             titledb,
@@ -78,10 +102,7 @@ mod tests {
         assert_eq!(response.status_code(), StatusCode::OK);
         let body: Value = response.json();
         assert_eq!(body.get("status"), Some(&Value::String("ok".into())));
-        assert_eq!(
-            body.get("catalog_files"),
-            Some(&Value::Number(1_i64.into()))
-        );
+        assert_eq!(body.get("catalog_files"), Some(&Value::Number(1_i64.into())));
         Ok(())
     }
 
@@ -100,10 +121,7 @@ mod tests {
 
         let server = TestServer::new(router(state))?;
 
-        let response = server
-            .get("/api/download/demo.nsp")
-            .add_header("Range", "bytes=1-3")
-            .await;
+        let response = server.get("/api/download/demo.nsp").add_header("Range", "bytes=1-3").await;
 
         assert_eq!(response.status_code(), StatusCode::PARTIAL_CONTENT);
         assert_eq!(response.header("accept-ranges"), "bytes");
@@ -134,10 +152,7 @@ mod tests {
         );
 
         let server = TestServer::new(router(state))?;
-        let response = server
-            .get("/api/get_game/1")
-            .add_header("Range", "bytes=1-3")
-            .await;
+        let response = server.get("/api/get_game/1").add_header("Range", "bytes=1-3").await;
 
         assert_eq!(response.status_code(), StatusCode::PARTIAL_CONTENT);
         assert_eq!(response.header("accept-ranges"), "bytes");
@@ -161,27 +176,18 @@ mod tests {
 
         let unauthorized = server.get("/api/catalog").await;
         assert_eq!(unauthorized.status_code(), StatusCode::UNAUTHORIZED);
-        assert_eq!(
-            unauthorized.header("www-authenticate"),
-            "Basic realm=\"ownfoil-rs\""
-        );
+        assert_eq!(unauthorized.header("www-authenticate"), "Basic realm=\"ownfoil-rs\"");
 
-        let authorized = server
-            .get("/api/catalog")
-            .add_header("Authorization", "Basic YWRtaW46d3Jvbmc=")
-            .await;
+        let authorized =
+            server.get("/api/catalog").add_header("Authorization", "Basic YWRtaW46d3Jvbmc=").await;
         assert_eq!(authorized.status_code(), StatusCode::UNAUTHORIZED);
 
-        let authorized = server
-            .get("/api/catalog")
-            .add_header("Authorization", "Basic YWRtaW46c2VjcmV0")
-            .await;
+        let authorized =
+            server.get("/api/catalog").add_header("Authorization", "Basic YWRtaW46c2VjcmV0").await;
         assert_eq!(authorized.status_code(), StatusCode::OK);
 
-        let authorized = server
-            .get("/api/catalog")
-            .add_header("Authorization", "YWRtaW46c2VjcmV0")
-            .await;
+        let authorized =
+            server.get("/api/catalog").add_header("Authorization", "YWRtaW46c2VjcmV0").await;
         assert_eq!(authorized.status_code(), StatusCode::UNAUTHORIZED);
         Ok(())
     }
@@ -277,11 +283,7 @@ mod tests {
         assert_eq!(response.status_code(), StatusCode::OK);
 
         let body: Value = response.json();
-        let files = body
-            .get("files")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
+        let files = body.get("files").and_then(Value::as_array).cloned().unwrap_or_default();
         assert_eq!(files.len(), 1);
         let first = files[0].as_object().cloned().unwrap_or_default();
         assert_eq!(
@@ -289,10 +291,61 @@ mod tests {
             Some(&Value::String(String::from("/api/get_game/1#demo.nsp")))
         );
         assert_eq!(first.get("size"), Some(&Value::Number(10_u64.into())));
-        assert_eq!(
-            body.get("success"),
-            Some(&Value::String(String::from("ok")))
+        assert_eq!(body.get("success"), Some(&Value::String(String::from("ok"))));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn shop_root_returns_tinfoil_payload_when_encryption_enabled() -> Result<()> {
+        let catalog = Catalog::from_files(vec![ContentFile {
+            relative_path: PathBuf::from("demo.nsp"),
+            name: String::from("demo.nsp"),
+            size: 10,
+            title_id: Some(String::from("0100000000000000")),
+            version: Some(0),
+            kind: ContentKind::Base,
+        }]);
+
+        let state = test_app_state_with_options(
+            catalog,
+            std::env::temp_dir(),
+            AuthSettings::from_users(Vec::new()),
+            SessionStore::new(24),
+            false,
+            ShopConfig { encrypt: true, ..Default::default() },
         );
+
+        let server = TestServer::new(router(state))?;
+        let response = server.get("/").add_header("User-Agent", "Tinfoil/1.0").await;
+
+        assert_eq!(response.status_code(), StatusCode::OK);
+        assert_eq!(response.header("content-type"), "application/octet-stream");
+        let body = response.as_bytes();
+        assert!(body.starts_with(b"TINFOIL"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn browser_root_redirects_to_admin_when_html_is_preferred() -> Result<()> {
+        let state = test_app_state(
+            Catalog::from_files(Vec::new()),
+            std::env::temp_dir(),
+            AuthSettings::from_users(vec![AuthUser {
+                username: String::from("admin"),
+                password: String::from("secret"),
+            }]),
+            SessionStore::new(24),
+        );
+
+        let server = TestServer::new(router(state))?;
+        let response = server
+            .get("/")
+            .add_header("Accept", "text/html")
+            .add_header("User-Agent", "Mozilla/5.0")
+            .await;
+
+        assert_eq!(response.status_code(), StatusCode::SEE_OTHER);
+        assert_eq!(response.header("location"), "/admin");
         Ok(())
     }
 
@@ -319,11 +372,7 @@ mod tests {
         assert_eq!(response.status_code(), StatusCode::OK);
 
         let body: Value = response.json();
-        let files = body
-            .get("files")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
+        let files = body.get("files").and_then(Value::as_array).cloned().unwrap_or_default();
         assert_eq!(files.len(), 1);
         let first = files[0].as_object().cloned().unwrap_or_default();
         assert_eq!(
@@ -356,27 +405,14 @@ mod tests {
         assert_eq!(response.status_code(), StatusCode::OK);
 
         let body: Value = response.json();
-        let sections = body
-            .get("sections")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
+        let sections = body.get("sections").and_then(Value::as_array).cloned().unwrap_or_default();
         assert_eq!(sections.len(), 5);
 
-        let first_section = sections
-            .first()
-            .and_then(Value::as_object)
-            .cloned()
-            .unwrap_or_default();
-        assert_eq!(
-            first_section.get("id"),
-            Some(&Value::String(String::from("new")))
-        );
-        let items = first_section
-            .get("items")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
+        let first_section =
+            sections.first().and_then(Value::as_object).cloned().unwrap_or_default();
+        assert_eq!(first_section.get("id"), Some(&Value::String(String::from("new"))));
+        let items =
+            first_section.get("items").and_then(Value::as_array).cloned().unwrap_or_default();
         assert_eq!(items.len(), 1);
 
         let first_item = items[0].as_object().cloned().unwrap_or_default();
@@ -384,6 +420,37 @@ mod tests {
             first_item.get("url"),
             Some(&Value::String(String::from("/api/get_game/1#demo.nsp")))
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn shop_sections_returns_tinfoil_payload_when_encryption_enabled() -> Result<()> {
+        let catalog = Catalog::from_files(vec![ContentFile {
+            relative_path: PathBuf::from("demo.nsp"),
+            name: String::from("demo.nsp"),
+            size: 10,
+            title_id: Some(String::from("0100000000000000")),
+            version: Some(0),
+            kind: ContentKind::Base,
+        }]);
+
+        let state = test_app_state_with_options(
+            catalog,
+            std::env::temp_dir(),
+            AuthSettings::from_users(Vec::new()),
+            SessionStore::new(24),
+            false,
+            ShopConfig { encrypt: true, ..Default::default() },
+        );
+
+        let server = TestServer::new(router(state))?;
+        let response =
+            server.get("/api/shop/sections").add_header("User-Agent", "Tinfoil/1.0").await;
+
+        assert_eq!(response.status_code(), StatusCode::OK);
+        assert_eq!(response.header("content-type"), "application/octet-stream");
+        let body = response.as_bytes();
+        assert!(body.starts_with(b"TINFOIL"));
         Ok(())
     }
 
@@ -410,11 +477,7 @@ mod tests {
         assert_eq!(response.status_code(), StatusCode::OK);
 
         let body: Value = response.json();
-        let sections = body
-            .get("sections")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
+        let sections = body.get("sections").and_then(Value::as_array).cloned().unwrap_or_default();
         let new_items = sections
             .iter()
             .find(|section| section.get("id") == Some(&Value::String(String::from("new"))))
@@ -464,18 +527,9 @@ mod tests {
 
         assert_eq!(updates.len(), 1);
         let item = updates[0].as_object().cloned().unwrap_or_default();
-        assert_eq!(
-            item.get("title_id"),
-            Some(&Value::String(String::from("0100ABCD12340000")))
-        );
-        assert_eq!(
-            item.get("app_id"),
-            Some(&Value::String(String::from("0100ABCD12340800")))
-        );
-        assert_eq!(
-            item.get("app_type"),
-            Some(&Value::String(String::from("UPDATE")))
-        );
+        assert_eq!(item.get("title_id"), Some(&Value::String(String::from("0100ABCD12340000"))));
+        assert_eq!(item.get("app_id"), Some(&Value::String(String::from("0100ABCD12340800"))));
+        assert_eq!(item.get("app_type"), Some(&Value::String(String::from("UPDATE"))));
         Ok(())
     }
 
@@ -517,18 +571,9 @@ mod tests {
 
         assert_eq!(dlc.len(), 1);
         let item = dlc[0].as_object().cloned().unwrap_or_default();
-        assert_eq!(
-            item.get("title_id"),
-            Some(&Value::String(String::from("0100ABCD12340000")))
-        );
-        assert_eq!(
-            item.get("app_id"),
-            Some(&Value::String(String::from("0100ABCD12341001")))
-        );
-        assert_eq!(
-            item.get("app_type"),
-            Some(&Value::String(String::from("DLC")))
-        );
+        assert_eq!(item.get("title_id"), Some(&Value::String(String::from("0100ABCD12340000"))));
+        assert_eq!(item.get("app_id"), Some(&Value::String(String::from("0100ABCD12341001"))));
+        assert_eq!(item.get("app_type"), Some(&Value::String(String::from("DLC"))));
         Ok(())
     }
 
@@ -548,7 +593,7 @@ mod tests {
                 name: String::from("update-new.nsp"),
                 size: 10,
                 title_id: Some(String::from("0100ABCD12340800")),
-                version: Some(131072),
+                version: Some(131_072),
                 kind: ContentKind::Update,
             },
         ]);
@@ -580,10 +625,7 @@ mod tests {
 
         assert_eq!(updates.len(), 1);
         let item = updates[0].as_object().cloned().unwrap_or_default();
-        assert_eq!(
-            item.get("app_version"),
-            Some(&Value::String(String::from("131072")))
-        );
+        assert_eq!(item.get("app_version"), Some(&Value::String(String::from("131072"))));
         Ok(())
     }
 
@@ -601,10 +643,7 @@ mod tests {
 
         assert_eq!(response.status_code(), StatusCode::OK);
         assert_eq!(response.header("content-type"), "image/svg+xml");
-        assert_eq!(
-            response.header("cache-control"),
-            "public, max-age=604800, immutable"
-        );
+        assert_eq!(response.header("cache-control"), "public, max-age=604800, immutable");
         Ok(())
     }
 
@@ -623,10 +662,7 @@ mod tests {
 
         let body: Value = response.json();
         assert_eq!(body.get("success"), Some(&Value::Bool(true)));
-        assert_eq!(
-            body.get("saves").and_then(Value::as_array).map(Vec::len),
-            Some(0)
-        );
+        assert_eq!(body.get("saves").and_then(Value::as_array).map(Vec::len), Some(0));
         Ok(())
     }
 }

@@ -5,25 +5,26 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::extract::{FromRequestParts, Path, Query, State};
-use axum::http::request::Parts;
 use axum::http::HeaderMap;
 use axum::http::Request;
+use axum::http::request::Parts;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{Html, IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use axum_extra::extract::cookie::{Cookie, CookieJar};
 use axum_extra::extract::Form;
+use axum_extra::extract::cookie::{Cookie, CookieJar};
 use futures_util::stream::StreamExt;
 use percent_encoding::percent_decode_str;
 use tower_governor::{
-    errors::GovernorError, governor::GovernorConfigBuilder, key_extractor::KeyExtractor,
-    GovernorLayer,
+    GovernorLayer, errors::GovernorError, governor::GovernorConfigBuilder,
+    key_extractor::KeyExtractor,
 };
 use tracing::{debug, warn};
 
 use crate::catalog::{ContentKind, TitleVersions};
-use crate::serve_files::{sanitize_relative_path, stream_with_range_support, DownloadLogContext};
+use crate::serve_files::{DownloadLogContext, sanitize_relative_path, stream_with_range_support};
+use crate::shop::{is_cyberfoil_request, is_shop_client_request, request_prefers_html};
 
 use crate::config::TitleDbConfig;
 
@@ -80,20 +81,17 @@ where
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         let addr = parts.extensions.get::<SocketAddr>().copied().or_else(|| {
-            parts
-                .extensions
-                .get::<axum::extract::ConnectInfo<SocketAddr>>()
-                .map(|c| c.0)
+            parts.extensions.get::<axum::extract::ConnectInfo<SocketAddr>>().map(|c| c.0)
         });
-        Ok(PeerAddr(addr))
+        Ok(Self(addr))
     }
 }
 
 use super::responses::{
-    build_catalog_response, build_shop_root_files, build_shop_sections_payload, catalog_sections,
-    map_file_error, map_shop_files, map_to_entries, static_png_response, CatalogResponse,
-    HealthResponse, SavesListResponse, SearchQuery, SearchResponse, SectionsResponse,
-    ShopRootResponse, ShopSectionsQuery, ShopSectionsResponse,
+    CatalogResponse, HealthResponse, SavesListResponse, SearchQuery, SearchResponse,
+    SectionsResponse, ShopRootResponse, ShopSectionsQuery, build_catalog_response,
+    build_shop_root_files, build_shop_sections_payload, catalog_sections, map_file_error,
+    map_shop_files, map_to_entries, respond_with_shop_payload, static_png_response,
 };
 use super::state::AppState;
 
@@ -165,33 +163,41 @@ pub fn router(state: AppState) -> Router {
 
 async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
     let catalog_files = state.catalog.read().await.files().len();
-    Json(HealthResponse {
-        status: "ok",
-        catalog_files: Some(catalog_files),
-    })
+    Json(HealthResponse { status: "ok", catalog_files: Some(catalog_files) })
 }
 
 fn ensure_admin_enabled(state: &AppState) -> Result<(), ApiError> {
-    if state.auth.is_enabled() {
-        Ok(())
-    } else {
-        Err(ApiError::NotFound)
-    }
+    if state.auth.is_enabled() { Ok(()) } else { Err(ApiError::NotFound) }
+}
+
+fn session_token(jar: &CookieJar) -> Option<&str> {
+    jar.get(SESSION_COOKIE).map(Cookie::value)
 }
 
 async fn shop_root(
     State(state): State<AppState>,
     jar: CookieJar,
     headers: HeaderMap,
-) -> Result<Json<ShopRootResponse>, ApiError> {
-    ensure_authorized(&state, &headers, jar.get(SESSION_COOKIE).map(|c| c.value()))?;
-    let catalog = state.catalog.read().await;
-    let files = build_shop_root_files(catalog.files());
+) -> Result<Response, ApiError> {
+    if !state.shop.tinfoil_only_mode
+        && !is_shop_client_request(&headers)
+        && request_prefers_html(&headers)
+    {
+        let target = if state.auth.is_enabled() { "/admin" } else { "/api/catalog" };
+        return Ok(Redirect::to(target).into_response());
+    }
+
+    ensure_authorized(&state, &headers, session_token(&jar))?;
+
+    let files = {
+        let catalog = state.catalog.read().await;
+        build_shop_root_files(catalog.files())
+    };
     debug!(files = files.len(), "shop root requested");
-    Ok(Json(ShopRootResponse {
-        success: "ok",
-        files,
-    }))
+    respond_with_shop_payload(
+        &ShopRootResponse { success: state.shop.motd.clone(), files },
+        &state.shop,
+    )
 }
 
 async fn catalog_all(
@@ -199,9 +205,11 @@ async fn catalog_all(
     jar: CookieJar,
     headers: HeaderMap,
 ) -> Result<Json<CatalogResponse>, ApiError> {
-    ensure_authorized(&state, &headers, jar.get(SESSION_COOKIE).map(|c| c.value()))?;
-    let catalog = state.catalog.read().await;
-    let entries = map_to_entries(catalog.files());
+    ensure_authorized(&state, &headers, session_token(&jar))?;
+    let entries = {
+        let catalog = state.catalog.read().await;
+        map_to_entries(catalog.files())
+    };
     debug!(entries = entries.len(), "catalog requested");
     Ok(Json(build_catalog_response(entries)))
 }
@@ -211,11 +219,9 @@ async fn sections(
     jar: CookieJar,
     headers: HeaderMap,
 ) -> Result<Json<SectionsResponse>, ApiError> {
-    ensure_authorized(&state, &headers, jar.get(SESSION_COOKIE).map(|c| c.value()))?;
+    ensure_authorized(&state, &headers, session_token(&jar))?;
     debug!("sections requested");
-    Ok(Json(SectionsResponse {
-        sections: catalog_sections(),
-    }))
+    Ok(Json(SectionsResponse { sections: catalog_sections() }))
 }
 
 async fn shop_sections(
@@ -223,18 +229,21 @@ async fn shop_sections(
     jar: CookieJar,
     Query(query): Query<ShopSectionsQuery>,
     headers: HeaderMap,
-) -> Result<Json<ShopSectionsResponse>, ApiError> {
-    ensure_authorized(&state, &headers, jar.get(SESSION_COOKIE).map(|c| c.value()))?;
-    let limit = query.limit.unwrap_or(50).max(1);
+) -> Result<Response, ApiError> {
+    ensure_authorized(&state, &headers, session_token(&jar))?;
 
-    let catalog = state.catalog.read().await;
-    let payload = build_shop_sections_payload(catalog.files(), limit, &state.titledb).await;
-    debug!(
-        limit,
-        sections = payload.sections.len(),
-        "shop sections requested"
-    );
-    Ok(Json(payload))
+    let (files, limit) = {
+        let catalog = state.catalog.read().await;
+        let limit = if is_cyberfoil_request(&headers) {
+            catalog.files().len().max(1)
+        } else {
+            query.limit.unwrap_or(50).max(1)
+        };
+        (catalog.files().to_vec(), limit)
+    };
+    let payload = build_shop_sections_payload(&files, limit, &state.titledb).await;
+    debug!(limit, sections = payload.sections.len(), "shop sections requested");
+    respond_with_shop_payload(&payload, &state.shop)
 }
 
 async fn section_entries(
@@ -243,15 +252,17 @@ async fn section_entries(
     Path(section): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<CatalogResponse>, ApiError> {
-    ensure_authorized(&state, &headers, jar.get(SESSION_COOKIE).map(|c| c.value()))?;
+    ensure_authorized(&state, &headers, session_token(&jar))?;
 
-    let catalog = state.catalog.read().await;
-    let entries = match section.as_str() {
-        "all" | "new" | "recommended" => map_to_entries(catalog.files()),
-        "base" | "games" => map_to_entries(catalog.files_by_kind(ContentKind::Base)),
-        "updates" | "update" => map_to_entries(catalog.files_by_kind(ContentKind::Update)),
-        "dlc" => map_to_entries(catalog.files_by_kind(ContentKind::Dlc)),
-        _ => Vec::new(),
+    let entries = {
+        let catalog = state.catalog.read().await;
+        match section.as_str() {
+            "all" | "new" | "recommended" => map_to_entries(catalog.files()),
+            "base" | "games" => map_to_entries(catalog.files_by_kind(ContentKind::Base)),
+            "updates" | "update" => map_to_entries(catalog.files_by_kind(ContentKind::Update)),
+            "dlc" => map_to_entries(catalog.files_by_kind(ContentKind::Dlc)),
+            _ => Vec::new(),
+        }
     };
     debug!(section = %section, entries = entries.len(), "section requested");
 
@@ -264,12 +275,14 @@ async fn search(
     headers: HeaderMap,
     Query(params): Query<SearchQuery>,
 ) -> Result<Json<SearchResponse>, ApiError> {
-    ensure_authorized(&state, &headers, jar.get(SESSION_COOKIE).map(|c| c.value()))?;
+    ensure_authorized(&state, &headers, session_token(&jar))?;
 
-    let catalog = state.catalog.read().await;
-    let matches = catalog.search(&params.q);
+    let matches = {
+        let catalog = state.catalog.read().await;
+        map_to_entries(catalog.search(&params.q).iter().copied())
+    };
     debug!(query = %params.q, results = matches.len(), "search requested");
-    let entries = map_to_entries(matches.iter().copied());
+    let entries = matches;
 
     Ok(Json(SearchResponse {
         query: params.q,
@@ -285,10 +298,13 @@ async fn title_versions(
     Path(title_id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Json<TitleVersions>, ApiError> {
-    ensure_authorized(&state, &headers, jar.get(SESSION_COOKIE).map(|c| c.value()))?;
+    ensure_authorized(&state, &headers, session_token(&jar))?;
 
-    let catalog = state.catalog.read().await;
-    let versions = catalog.versions(&title_id).ok_or(ApiError::TitleNotFound)?;
+    let versions = {
+        let catalog = state.catalog.read().await;
+        catalog.versions(&title_id)
+    }
+    .ok_or(ApiError::TitleNotFound)?;
     debug!(
         title_id = %versions.title_id,
         versions = versions.files.len(),
@@ -304,22 +320,14 @@ async fn download(
     Path(path): Path<String>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
-    ensure_authorized(&state, &headers, jar.get(SESSION_COOKIE).map(|c| c.value()))?;
+    ensure_authorized(&state, &headers, session_token(&jar))?;
 
-    let decoded = percent_decode_str(&path)
-        .decode_utf8()
-        .map_err(|_| ApiError::InvalidPath)?;
-    let sanitized = sanitize_relative_path(&decoded).map_err(map_file_error)?;
-    let title = sanitized
-        .file_name()
-        .and_then(|n: &std::ffi::OsStr| n.to_str())
-        .unwrap_or("?")
-        .to_string();
+    let decoded = percent_decode_str(&path).decode_utf8().map_err(|_| ApiError::InvalidPath)?;
+    let sanitized = sanitize_relative_path(&decoded).map_err(|error| map_file_error(&error))?;
+    let title =
+        sanitized.file_name().and_then(|n: &std::ffi::OsStr| n.to_str()).unwrap_or("?").to_string();
 
-    let log_ctx = peer.map(|ip| DownloadLogContext {
-        ip,
-        title: title.clone(),
-    });
+    let log_ctx = peer.map(|ip| DownloadLogContext { ip, title: title.clone() });
 
     let response = match stream_with_range_support(
         &state.library_root,
@@ -332,7 +340,7 @@ async fn download(
         Ok(r) => r,
         Err(error) => {
             warn!(path = %sanitized.display(), error = %error, "download failed");
-            return Err(map_file_error(error));
+            return Err(map_file_error(&error));
         }
     };
     debug!(
@@ -351,19 +359,14 @@ async fn download_by_id(
     Path(id): Path<usize>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
-    ensure_authorized(&state, &headers, jar.get(SESSION_COOKIE).map(|c| c.value()))?;
+    ensure_authorized(&state, &headers, session_token(&jar))?;
 
-    let (relative_path, filename) = {
-        let catalog = state.catalog.read().await;
-        let index = id.checked_sub(1).ok_or(ApiError::NotFound)?;
-        let file = catalog.files().get(index).ok_or(ApiError::NotFound)?;
-        (file.relative_path.clone(), file.name.clone())
-    };
+    let index = id.checked_sub(1).ok_or(ApiError::NotFound)?;
+    let file = state.catalog.read().await.files().get(index).cloned().ok_or(ApiError::NotFound)?;
+    let relative_path = file.relative_path;
+    let filename = file.name;
 
-    let log_ctx = peer.map(|ip| DownloadLogContext {
-        ip,
-        title: filename.clone(),
-    });
+    let log_ctx = peer.map(|ip| DownloadLogContext { ip, title: filename.clone() });
 
     let response = match stream_with_range_support(
         &state.library_root,
@@ -382,7 +385,7 @@ async fn download_by_id(
                 error = %error,
                 "download by id failed"
             );
-            return Err(map_file_error(error));
+            return Err(map_file_error(&error));
         }
     };
 
@@ -403,7 +406,7 @@ async fn shop_icon(
     Path(title_id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
-    ensure_authorized(&state, &headers, jar.get(SESSION_COOKIE).map(|c| c.value()))?;
+    ensure_authorized(&state, &headers, session_token(&jar))?;
     let tid = title_id.trim_end_matches(".png");
     if let Some(info) = state.titledb.lookup(tid).await {
         if let Some(url) = info.icon_url {
@@ -421,7 +424,7 @@ async fn shop_banner(
     Path(title_id): Path<String>,
     headers: HeaderMap,
 ) -> Result<Response, ApiError> {
-    ensure_authorized(&state, &headers, jar.get(SESSION_COOKIE).map(|c| c.value()))?;
+    ensure_authorized(&state, &headers, session_token(&jar))?;
     let tid = title_id.trim_end_matches(".png");
     if let Some(info) = state.titledb.lookup(tid).await {
         if let Some(url) = info.banner_url {
@@ -438,11 +441,8 @@ async fn saves_list(
     jar: CookieJar,
     headers: HeaderMap,
 ) -> Result<Json<SavesListResponse>, ApiError> {
-    ensure_authorized(&state, &headers, jar.get(SESSION_COOKIE).map(|c| c.value()))?;
-    Ok(Json(SavesListResponse {
-        success: true,
-        saves: Vec::new(),
-    }))
+    ensure_authorized(&state, &headers, session_token(&jar))?;
+    Ok(Json(SavesListResponse { success: true, saves: Vec::new() }))
 }
 
 #[derive(serde::Deserialize)]
@@ -453,11 +453,7 @@ struct LoginForm {
 
 async fn login_page(State(state): State<AppState>, jar: CookieJar) -> Result<Response, ApiError> {
     ensure_admin_enabled(&state)?;
-    if jar
-        .get(SESSION_COOKIE)
-        .and_then(|c| state.sessions.get(c.value()))
-        .is_some()
-    {
+    if jar.get(SESSION_COOKIE).and_then(|c| state.sessions.get(c.value())).is_some() {
         return Ok(Redirect::to("/admin").into_response());
     }
     Ok(Html(include_str!("login.html")).into_response())
@@ -485,10 +481,8 @@ async fn login_post(
 
 async fn admin_ui(State(state): State<AppState>, jar: CookieJar) -> Result<Response, ApiError> {
     ensure_admin_enabled(&state)?;
-    let session_valid = jar
-        .get(SESSION_COOKIE)
-        .and_then(|c| state.sessions.get(c.value()))
-        .is_some();
+    let session_valid =
+        jar.get(SESSION_COOKIE).and_then(|c| state.sessions.get(c.value())).is_some();
     if !session_valid {
         return Ok(Redirect::to("/admin/login").into_response());
     }
@@ -503,18 +497,13 @@ async fn logout(
     if let Some(c) = jar.get(SESSION_COOKIE) {
         state.sessions.remove(c.value());
     }
-    Ok((
-        jar.remove(Cookie::from(SESSION_COOKIE)),
-        Redirect::to("/admin/login"),
-    ))
+    Ok((jar.remove(Cookie::from(SESSION_COOKIE)), Redirect::to("/admin/login")))
 }
 
 async fn settings_ui(State(state): State<AppState>, jar: CookieJar) -> Result<Response, ApiError> {
     ensure_admin_enabled(&state)?;
-    let session_valid = jar
-        .get(SESSION_COOKIE)
-        .and_then(|c| state.sessions.get(c.value()))
-        .is_some();
+    let session_valid =
+        jar.get(SESSION_COOKIE).and_then(|c| state.sessions.get(c.value())).is_some();
     if !session_valid {
         return Ok(Redirect::to("/admin/login").into_response());
     }
@@ -539,7 +528,7 @@ async fn settings_get(
     headers: HeaderMap,
 ) -> Result<Json<SettingsResponse>, ApiError> {
     ensure_admin_enabled(&state)?;
-    ensure_authorized(&state, &headers, jar.get(SESSION_COOKIE).map(|c| c.value()))?;
+    ensure_authorized(&state, &headers, session_token(&jar))?;
     let titledb = state.titledb.config().await;
     let entries = state.titledb.entry_count().await;
     let last_refresh = state
@@ -561,7 +550,7 @@ async fn settings_post(
     Json(body): Json<SettingsPost>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     ensure_admin_enabled(&state)?;
-    ensure_authorized(&state, &headers, jar.get(SESSION_COOKIE).map(|c| c.value()))?;
+    ensure_authorized(&state, &headers, session_token(&jar))?;
     if let Some(titledb) = body.titledb {
         state.titledb.set_config(titledb.clone()).await;
         if let Err(e) = super::settings::save_settings(&state.data_dir, &titledb) {
@@ -578,21 +567,19 @@ async fn titledb_progress_sse(
     headers: HeaderMap,
 ) -> Result<Sse<impl futures_util::Stream<Item = Result<Event, Infallible>> + Send>, ApiError> {
     ensure_admin_enabled(&state)?;
-    ensure_authorized(&state, &headers, jar.get(SESSION_COOKIE).map(|c| c.value()))?;
+    ensure_authorized(&state, &headers, session_token(&jar))?;
     let rx = state.titledb_progress_tx.subscribe();
-    let stream = tokio_stream::wrappers::BroadcastStream::new(rx).map(|r| match r {
-        Ok(msg) => Ok(Event::default().data(msg)),
-        Err(_) => Ok(Event::default().data("[titledb] (lagged, some messages dropped)")),
+    let stream = tokio_stream::wrappers::BroadcastStream::new(rx).map(|result| {
+        result.map_or_else(
+            |_| Ok(Event::default().data("[titledb] (lagged, some messages dropped)")),
+            |msg| Ok(Event::default().data(msg)),
+        )
     });
     let initial = futures_util::stream::iter([Ok(
         Event::default().data("[titledb] connected, listening for progress...")
     )]);
     let stream = initial.chain(stream);
-    Ok(Sse::new(stream).keep_alive(
-        KeepAlive::new()
-            .interval(Duration::from_secs(15))
-            .text("ping"),
-    ))
+    Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)).text("ping")))
 }
 
 async fn titledb_test_connectivity(
@@ -601,7 +588,7 @@ async fn titledb_test_connectivity(
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     ensure_admin_enabled(&state)?;
-    ensure_authorized(&state, &headers, jar.get(SESSION_COOKIE).map(|c| c.value()))?;
+    ensure_authorized(&state, &headers, session_token(&jar))?;
     let config = state.titledb.config().await;
     let region = &config.region;
     let lang = &config.language;
@@ -611,10 +598,8 @@ async fn titledb_test_connectivity(
     let blawar_jsdelivr_url =
         format!("https://cdn.jsdelivr.net/gh/blawar/titledb@master/{region}.{lang}.json");
 
-    let mut urls: Vec<(&str, String)> = vec![
-        ("blawar_raw", blawar_raw_url),
-        ("blawar_jsdelivr", blawar_jsdelivr_url),
-    ];
+    let mut urls: Vec<(&str, String)> =
+        vec![("blawar_raw", blawar_raw_url), ("blawar_jsdelivr", blawar_jsdelivr_url)];
     if let Some(u) = &config.url_override {
         urls.push(("url_override", u.clone()));
     }
@@ -664,7 +649,7 @@ async fn settings_refresh(
     headers: HeaderMap,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     ensure_admin_enabled(&state)?;
-    ensure_authorized(&state, &headers, jar.get(SESSION_COOKIE).map(|c| c.value()))?;
+    ensure_authorized(&state, &headers, session_token(&jar))?;
     state.titledb.refresh();
     Ok(Json(serde_json::json!({ "success": true })))
 }

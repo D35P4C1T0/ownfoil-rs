@@ -1,16 +1,16 @@
-//! TitleDB integration: fetch game metadata (icon/banner URLs) from multiple sources.
+//! `TitleDB` integration: fetch game metadata (icon/banner URLs) from multiple sources.
 //! Fetches concurrently from all sources and merges results redundantly.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock, broadcast};
 use tracing::{debug, error, info, warn};
 
 use crate::config::TitleDbConfig;
 
-/// Per-title metadata from TitleDB.
+/// Per-title metadata from `TitleDB`.
 ///
 /// Used to enrich shop section items with icon/banner URLs and display names.
 #[derive(Debug, Clone)]
@@ -23,7 +23,7 @@ pub struct TitleInfo {
     pub name: Option<String>,
 }
 
-/// Lazy-loaded TitleDB cache. Loads from disk on first access, refreshes in background.
+/// Lazy-loaded `TitleDB` cache. Loads from disk on first access, refreshes in background.
 #[derive(Debug, Clone)]
 pub struct TitleDb {
     inner: Arc<RwLock<TitleDbInner>>,
@@ -44,7 +44,7 @@ impl TitleDb {
         Self::with_progress(config, data_dir, None)
     }
 
-    /// Create a TitleDB instance with optional progress broadcast channel.
+    /// Create a `TitleDB` instance with optional progress broadcast channel.
     ///
     /// Progress messages are sent during refresh (e.g. for SSE in the admin UI).
     pub fn with_progress(
@@ -73,12 +73,7 @@ impl TitleDb {
 
     #[allow(dead_code)]
     pub async fn progress_subscribe(&self) -> Option<broadcast::Receiver<String>> {
-        self.inner
-            .read()
-            .await
-            .progress_tx
-            .as_ref()
-            .map(|tx| tx.subscribe())
+        self.inner.read().await.progress_tx.as_ref().map(broadcast::Sender::subscribe)
     }
 
     /// Look up icon and banner URLs for a title ID (16-char hex, uppercase).
@@ -117,13 +112,13 @@ impl TitleDb {
     }
 }
 
-fn send_progress(tx: &Option<broadcast::Sender<String>>, msg: &str) {
+fn send_progress(tx: Option<&broadcast::Sender<String>>, msg: &str) {
     if let Some(tx) = tx {
         let _ = tx.send(msg.to_string());
     }
 }
 
-/// Fetch and merge TitleDB data without holding the lock, then apply in a short write.
+/// Fetch and merge `TitleDB` data without holding the lock, then apply in a short write.
 async fn do_refresh_without_lock(inner: &RwLock<TitleDbInner>) -> Result<(), TitleDbError> {
     let (enabled, region, lang, url_override, data_dir, progress_tx) = {
         let guard = inner.read().await;
@@ -144,22 +139,20 @@ async fn do_refresh_without_lock(inner: &RwLock<TitleDbInner>) -> Result<(), Tit
         return Ok(());
     }
 
-    send_progress(&progress_tx, "[titledb] refresh starting");
+    send_progress(progress_tx.as_ref(), "[titledb] refresh starting");
     info!(
         region = %region,
         language = %lang,
         "titledb refresh starting"
     );
 
-    let cache_path = data_dir
-        .join("titledb")
-        .join(format!("{region}.{lang}.json"));
+    let cache_path = data_dir.join("titledb").join(format!("{region}.{lang}.json"));
 
     let parent = cache_path.parent().ok_or(TitleDbError::InvalidFormat)?;
     std::fs::create_dir_all(parent)?;
     debug!(cache_path = %cache_path.display(), "titledb cache path");
 
-    send_progress(&progress_tx, "[titledb] fetching from multiple sources...");
+    send_progress(progress_tx.as_ref(), "[titledb] fetching from multiple sources...");
 
     // jsDelivr has a 20 MB limit for GitHub files; TitleDB JSON exceeds that
     let blawar_raw = Source::BlawarRaw {
@@ -173,39 +166,25 @@ async fn do_refresh_without_lock(inner: &RwLock<TitleDbInner>) -> Result<(), Tit
         sources.push(Source::OwnfoilZip { url });
     }
 
-    let merged = fetch_and_merge(&sources, &region, &lang, &progress_tx).await?;
+    let merged = fetch_and_merge(&sources, &region, &lang, progress_tx.as_ref()).await?;
 
-    send_progress(&progress_tx, "[titledb] applying updates...");
+    send_progress(progress_tx.as_ref(), "[titledb] applying updates...");
 
-    let mut guard = inner.write().await;
-    if !merged.is_empty() {
-        let count = merged.len();
-        guard.map = merged;
-        guard.last_refresh = Some(std::time::Instant::now());
-        send_progress(
-            &progress_tx,
-            &format!("[titledb] loaded {} entries from network", count),
-        );
-        info!(entries = count, "titledb loaded from network");
-
-        if let Err(e) = save_cache(&cache_path, &guard.map) {
-            warn!(path = %cache_path.display(), error = %e, "titledb cache save failed");
-        } else {
-            send_progress(&progress_tx, "[titledb] cache saved");
-            debug!(path = %cache_path.display(), "titledb cache saved");
-        }
-    } else {
-        send_progress(&progress_tx, "[titledb] network empty, trying cache...");
+    if merged.is_empty() {
+        send_progress(progress_tx.as_ref(), "[titledb] network empty, trying cache...");
         info!("titledb network fetch returned no data, trying cache");
         if cache_path.exists() {
             match load_cache(&cache_path) {
                 Ok(loaded) => {
                     let count = loaded.len();
-                    guard.map = loaded;
-                    guard.last_refresh = Some(std::time::Instant::now());
+                    {
+                        let mut guard = inner.write().await;
+                        guard.map = loaded;
+                        guard.last_refresh = Some(std::time::Instant::now());
+                    }
                     send_progress(
-                        &progress_tx,
-                        &format!("[titledb] loaded {} entries from cache", count),
+                        progress_tx.as_ref(),
+                        &format!("[titledb] loaded {count} entries from cache"),
                     );
                     info!(
                         entries = count,
@@ -222,15 +201,33 @@ async fn do_refresh_without_lock(inner: &RwLock<TitleDbInner>) -> Result<(), Tit
                 }
             }
         } else {
-            send_progress(&progress_tx, "[titledb] empty, no cache available");
+            send_progress(progress_tx.as_ref(), "[titledb] empty, no cache available");
             warn!(
                 path = %cache_path.display(),
                 "titledb empty and no cache available"
             );
         }
+    } else {
+        let count = merged.len();
+        if let Err(e) = save_cache(&cache_path, &merged) {
+            warn!(path = %cache_path.display(), error = %e, "titledb cache save failed");
+        } else {
+            send_progress(progress_tx.as_ref(), "[titledb] cache saved");
+            debug!(path = %cache_path.display(), "titledb cache saved");
+        }
+        {
+            let mut guard = inner.write().await;
+            guard.map = merged;
+            guard.last_refresh = Some(std::time::Instant::now());
+        }
+        send_progress(
+            progress_tx.as_ref(),
+            &format!("[titledb] loaded {count} entries from network"),
+        );
+        info!(entries = count, "titledb loaded from network");
     }
 
-    send_progress(&progress_tx, "[titledb] refresh complete");
+    send_progress(progress_tx.as_ref(), "[titledb] refresh complete");
     Ok(())
 }
 
@@ -238,14 +235,11 @@ async fn fetch_and_merge(
     sources: &[Source],
     region: &str,
     lang: &str,
-    progress_tx: &Option<broadcast::Sender<String>>,
+    progress_tx: Option<&broadcast::Sender<String>>,
 ) -> Result<HashMap<String, TitleInfo>, TitleDbError> {
     let mut merged = HashMap::new();
 
-    let handles: Vec<_> = sources
-        .iter()
-        .map(|src| fetch_source(src, region, lang))
-        .collect();
+    let handles: Vec<_> = sources.iter().map(|src| fetch_source(src, region, lang)).collect();
 
     let results = futures_util::future::join_all(handles).await;
 
@@ -267,10 +261,7 @@ async fn fetch_and_merge(
         match result {
             Ok(entries) => {
                 let count = entries.len();
-                send_progress(
-                    progress_tx,
-                    &format!("[titledb] {} fetched {} entries", name, count),
-                );
+                send_progress(progress_tx, &format!("[titledb] {name} fetched {count} entries"));
                 for (id, info) in entries {
                     merged
                         .entry(id.clone())
@@ -284,7 +275,7 @@ async fn fetch_and_merge(
                 info!(source = %name, entries = count, "titledb source fetched");
             }
             Err(e) => {
-                send_progress(progress_tx, &format!("[titledb] {} failed: {}", name, e));
+                send_progress(progress_tx, &format!("[titledb] {name} failed: {e}"));
                 warn!(source = %name, error = %e, "titledb source fetch failed");
             }
         }
@@ -331,7 +322,7 @@ async fn fetch_ownfoil_zip(
     let resp = resp.error_for_status().map_err(|e| {
         warn!(
             url = %zip_url,
-            status = e.status().map(|s| s.as_u16()).unwrap_or(0),
+            status = e.status().map_or(0, |status| status.as_u16()),
             "titledb ownfoil zip: HTTP error"
         );
         TitleDbError::Http(e)
@@ -365,7 +356,7 @@ async fn fetch_blawar_raw(url: &str) -> Result<Vec<(String, TitleInfo)>, TitleDb
     let resp = resp.error_for_status().map_err(|e| {
         warn!(
             url = %url,
-            status = e.status().map(|s| s.as_u16()).unwrap_or(0),
+            status = e.status().map_or(0, |status| status.as_u16()),
             "titledb blawar: HTTP error"
         );
         TitleDbError::Http(e)
@@ -382,10 +373,7 @@ fn parse_titles_json(buf: &str) -> Result<Vec<(String, TitleInfo)>, TitleDbError
     let mut out = Vec::new();
     for (_, v) in obj {
         let entry = v.as_object().ok_or(TitleDbError::InvalidFormat)?;
-        let id = entry
-            .get("id")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_uppercase());
+        let id = entry.get("id").and_then(|v| v.as_str()).map(str::to_uppercase);
         let Some(id) = id else { continue };
         if id.len() != 16 || !id.chars().all(|c| c.is_ascii_hexdigit()) {
             continue;
@@ -395,30 +383,20 @@ fn parse_titles_json(buf: &str) -> Result<Vec<(String, TitleInfo)>, TitleDbError
             .get("iconUrl")
             .or_else(|| entry.get("icon_url"))
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+            .map(ToString::to_string);
         if let Some(ref url) = icon_url {
             if !url.is_empty() && !url.starts_with("http") {
-                icon_url = Some(format!("https://img-eshop.cdn.nintendo.net{}", url));
+                icon_url = Some(format!("https://img-eshop.cdn.nintendo.net{url}"));
             }
         }
         let banner_url = entry
             .get("bannerUrl")
             .or_else(|| entry.get("banner_url"))
             .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        let name = entry
-            .get("name")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
+            .map(ToString::to_string);
+        let name = entry.get("name").and_then(|v| v.as_str()).map(ToString::to_string);
 
-        out.push((
-            id,
-            TitleInfo {
-                icon_url,
-                banner_url,
-                name,
-            },
-        ));
+        out.push((id, TitleInfo { icon_url, banner_url, name }));
     }
 
     Ok(out)
@@ -427,13 +405,13 @@ fn parse_titles_json(buf: &str) -> Result<Vec<(String, TitleInfo)>, TitleDbError
 impl TitleInfo {
     fn merge(&mut self, other: &Self) {
         if self.icon_url.is_none() && other.icon_url.is_some() {
-            self.icon_url = other.icon_url.clone();
+            self.icon_url.clone_from(&other.icon_url);
         }
         if self.banner_url.is_none() && other.banner_url.is_some() {
-            self.banner_url = other.banner_url.clone();
+            self.banner_url.clone_from(&other.banner_url);
         }
         if self.name.is_none() && other.name.is_some() {
-            self.name = other.name.clone();
+            self.name.clone_from(&other.name);
         }
     }
 }
@@ -444,28 +422,12 @@ fn load_cache(path: &std::path::Path) -> Result<HashMap<String, TitleInfo>, Titl
     let mut map = HashMap::new();
     for v in raw {
         let obj = v.as_object().ok_or(TitleDbError::InvalidFormat)?;
-        let id = obj
-            .get("id")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_uppercase());
+        let id = obj.get("id").and_then(|v| v.as_str()).map(str::to_uppercase);
         let Some(id) = id else { continue };
-        let icon_url = obj
-            .get("icon_url")
-            .and_then(|v| v.as_str())
-            .map(String::from);
-        let banner_url = obj
-            .get("banner_url")
-            .and_then(|v| v.as_str())
-            .map(String::from);
+        let icon_url = obj.get("icon_url").and_then(|v| v.as_str()).map(String::from);
+        let banner_url = obj.get("banner_url").and_then(|v| v.as_str()).map(String::from);
         let name = obj.get("name").and_then(|v| v.as_str()).map(String::from);
-        map.insert(
-            id,
-            TitleInfo {
-                icon_url,
-                banner_url,
-                name,
-            },
-        );
+        map.insert(id, TitleInfo { icon_url, banner_url, name });
     }
     Ok(map)
 }

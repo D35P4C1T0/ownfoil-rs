@@ -3,12 +3,12 @@
 //! Barebones CyberFoil-compatible Tinfoil game server in Rust.
 //!
 //! Serves a Nintendo Switch content library over HTTP with catalog listing, file download,
-//! and optional HTTP Basic auth. Compatible with Tinfoil and CyberFoil clients.
+//! and optional HTTP Basic auth. Compatible with Tinfoil and `CyberFoil` clients.
 //!
 //! ## Architecture
 //!
 //! - **Catalog**: In-memory index of `.nsp`, `.xci`, `.nsz`, `.xcz` files, refreshed on interval
-//! - **TitleDB**: Optional game metadata (icons, banners) from [blawar/titledb](https://github.com/blawar/titledb)
+//! - **`TitleDB`**: Optional game metadata (icons, banners) from [blawar/titledb](https://github.com/blawar/titledb)
 //! - **Auth**: TOML-based credentials with constant-time password comparison
 //! - **HTTP**: Axum router with rate limiting, request IDs, and graceful shutdown
 
@@ -21,6 +21,7 @@ mod config;
 mod http;
 mod scanner;
 mod serve_files;
+mod shop;
 mod titledb;
 
 use std::net::SocketAddr;
@@ -38,13 +39,13 @@ use tracing_subscriber::EnvFilter;
 use crate::auth::load_auth;
 use crate::catalog::Catalog;
 use crate::config::{AppConfig, Cli};
-use crate::http::{router, AppState, SessionStore};
+use crate::http::{AppState, SessionStore, router};
 use crate::scanner::scan_library;
 use crate::titledb::TitleDb;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    init_logging().context("failed to initialize logging")?;
+    init_logging();
 
     let cli = Cli::parse();
     let config = AppConfig::from_cli(cli).context("failed to load configuration")?;
@@ -54,10 +55,8 @@ async fn main() -> anyhow::Result<()> {
         }
         load_auth(None).context("failed to initialize auth")?
     } else {
-        let auth_path = config
-            .auth_file
-            .as_deref()
-            .unwrap_or_else(|| unreachable!("validated by config"));
+        let auth_path =
+            config.auth_file.as_deref().unwrap_or_else(|| unreachable!("validated by config"));
         load_auth(Some(auth_path)).context("failed to load auth credentials file")?
     };
     info!(
@@ -65,6 +64,8 @@ async fn main() -> anyhow::Result<()> {
         root = %config.library_root.display(),
         public_shop = config.public_shop,
         insecure_admin_cookie = config.insecure_admin_cookie,
+        shop_encrypt = config.shop.effective_encrypt(),
+        shop_tinfoil_only_mode = config.shop.tinfoil_only_mode,
         auth_enabled = auth.is_enabled(),
         auth_user_count = auth.user_count(),
         auth_file = ?config.auth_file.as_ref().map(|path| path.display().to_string()),
@@ -73,10 +74,7 @@ async fn main() -> anyhow::Result<()> {
     );
 
     let initial_files = scan_library(&config.library_root).await.with_context(|| {
-        format!(
-            "failed to scan library root {}",
-            config.library_root.display()
-        )
+        format!("failed to scan library root {}", config.library_root.display())
     })?;
 
     info!(
@@ -112,6 +110,7 @@ async fn main() -> anyhow::Result<()> {
         catalog,
         library_root: config.library_root,
         auth: Arc::new(auth),
+        shop: Arc::new(config.shop),
         insecure_admin_cookie: config.insecure_admin_cookie,
         sessions: SessionStore::new(24),
         titledb,
@@ -139,32 +138,23 @@ async fn main() -> anyhow::Result<()> {
     let shutdown = tokio::signal::ctrl_c();
     info!(bind = %config.bind, "ownfoil-rs listening");
 
-    serve(
-        listener,
-        app.into_make_service_with_connect_info::<SocketAddr>(),
-    )
-    .with_graceful_shutdown(async {
-        let _ = shutdown.await;
-        info!("shutting down gracefully");
-    })
-    .await
-    .context("server exited with error")
+    serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
+        .with_graceful_shutdown(async {
+            let _ = shutdown.await;
+            info!("shutting down gracefully");
+        })
+        .await
+        .context("server exited with error")
 }
 
 /// Initialize tracing subscriber with `RUST_LOG` env filter (default: `info`).
-fn init_logging() -> anyhow::Result<()> {
+fn init_logging() {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 
-    tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_target(false)
-        .compact()
-        .init();
-
-    Ok(())
+    tracing_subscriber::fmt().with_env_filter(filter).with_target(false).compact().init();
 }
 
-/// Spawns a background task that refreshes TitleDB at the given interval (e.g. `24h`).
+/// Spawns a background task that refreshes `TitleDB` at the given interval (e.g. `24h`).
 /// Runs one refresh immediately, then on a ticker.
 fn spawn_titledb_refresh(titledb: TitleDb, interval_str: &str) {
     let interval = humantime::parse_duration(interval_str).unwrap_or(Duration::from_secs(86400));
@@ -196,8 +186,7 @@ fn spawn_background_scanner(
             let handle = tokio::spawn(async move {
                 let files = scan_library(&root).await?;
                 let count = files.len();
-                let mut guard = catalog.write().await;
-                *guard = Catalog::from_files(files);
+                *catalog.write().await = Catalog::from_files(files);
                 Ok::<_, crate::scanner::ScanError>(count)
             });
 

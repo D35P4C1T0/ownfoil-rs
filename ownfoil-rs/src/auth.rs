@@ -85,15 +85,9 @@ pub struct AuthUser {
 #[derive(Debug, Error)]
 pub enum AuthFileError {
     #[error("failed to read auth file {path}: {source}")]
-    Read {
-        path: String,
-        source: std::io::Error,
-    },
+    Read { path: String, source: std::io::Error },
     #[error("invalid auth config in {path}: {source}")]
-    Parse {
-        path: String,
-        source: toml::de::Error,
-    },
+    Parse { path: String, source: toml::de::Error },
     #[error("auth file {path} does not define valid credentials")]
     EmptyCredentials { path: String },
 }
@@ -145,15 +139,11 @@ pub fn load_users_from_file(path: Option<&Path>) -> Result<Vec<AuthUser>, AuthFi
         return Ok(Vec::new());
     };
 
-    let raw = std::fs::read_to_string(path).map_err(|source| AuthFileError::Read {
-        path: path.display().to_string(),
-        source,
-    })?;
+    let raw = std::fs::read_to_string(path)
+        .map_err(|source| AuthFileError::Read { path: path.display().to_string(), source })?;
 
-    let parsed: AuthFile = toml::from_str(&raw).map_err(|source| AuthFileError::Parse {
-        path: path.display().to_string(),
-        source,
-    })?;
+    let parsed: AuthFile = toml::from_str(&raw)
+        .map_err(|source| AuthFileError::Parse { path: path.display().to_string(), source })?;
 
     let mut users = Vec::new();
 
@@ -162,10 +152,10 @@ pub fn load_users_from_file(path: Option<&Path>) -> Result<Vec<AuthUser>, AuthFi
     }
 
     if let Some(more) = parsed.users {
-        users.extend(more.into_iter().map(|entry| AuthUser {
-            username: entry.username,
-            password: entry.password,
-        }));
+        users.extend(
+            more.into_iter()
+                .map(|entry| AuthUser { username: entry.username, password: entry.password }),
+        );
     }
 
     let settings = AuthSettings::from_users(users);
@@ -176,9 +166,7 @@ pub fn load_users_from_file(path: Option<&Path>) -> Result<Vec<AuthUser>, AuthFi
             .map(|(username, password)| AuthUser { username, password })
             .collect::<Vec<_>>())
     } else {
-        Err(AuthFileError::EmptyCredentials {
-            path: path.display().to_string(),
-        })
+        Err(AuthFileError::EmptyCredentials { path: path.display().to_string() })
     }
 }
 
@@ -188,23 +176,14 @@ mod tests {
     use anyhow::Result;
     use tempfile::tempdir;
 
-    use super::{load_users_from_file, AuthSettings, AuthUser};
+    use super::{AuthSettings, AuthUser, load_users_from_file};
 
     #[test]
     fn auth_settings_merges_duplicate_users() {
         let settings = AuthSettings::from_users(vec![
-            AuthUser {
-                username: String::from("alice"),
-                password: String::from("pw1"),
-            },
-            AuthUser {
-                username: String::from("alice"),
-                password: String::from("pw2"),
-            },
-            AuthUser {
-                username: String::from("bob"),
-                password: String::from("pw3"),
-            },
+            AuthUser { username: String::from("alice"), password: String::from("pw1") },
+            AuthUser { username: String::from("alice"), password: String::from("pw2") },
+            AuthUser { username: String::from("bob"), password: String::from("pw3") },
         ]);
 
         assert!(settings.is_enabled());

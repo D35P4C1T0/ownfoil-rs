@@ -63,7 +63,7 @@ static VERSION_RE: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 impl Catalog {
-    /// Build a catalog from scanned files. Sorts by title_id, version, name.
+    /// Build a catalog from scanned files. Sorts by `title_id`, version, name.
     pub fn from_files(mut files: Vec<ContentFile>) -> Self {
         files.sort_by(|left, right| {
             left.title_id
@@ -75,7 +75,7 @@ impl Catalog {
         let mut titles: BTreeMap<String, Vec<usize>> = BTreeMap::new();
         for (idx, file) in files.iter().enumerate() {
             if let Some(title_id) = &file.title_id {
-                titles.entry(title_id.to_string()).or_default().push(idx);
+                titles.entry(title_id.clone()).or_default().push(idx);
             }
         }
 
@@ -87,10 +87,7 @@ impl Catalog {
     }
 
     pub fn files_by_kind(&self, kind: ContentKind) -> Vec<&ContentFile> {
-        self.files
-            .iter()
-            .filter(|file| file.kind == kind)
-            .collect::<Vec<_>>()
+        self.files.iter().filter(|file| file.kind == kind).collect::<Vec<_>>()
     }
 
     pub fn search(&self, query: &str) -> Vec<&ContentFile> {
@@ -102,8 +99,7 @@ impl Catalog {
                     || file
                         .title_id
                         .as_ref()
-                        .map(|title| title.to_ascii_lowercase().contains(&q))
-                        .unwrap_or(false)
+                        .is_some_and(|title| title.to_ascii_lowercase().contains(&q))
             })
             .collect::<Vec<_>>()
     }
@@ -130,11 +126,7 @@ pub fn parse_filename_metadata(name: &str) -> ParsedFilename {
 
     let version = VERSION_RE
         .captures(name)
-        .and_then(|c| {
-            c.name("version")
-                .or_else(|| c.name("version_2"))
-                .map(|m| m.as_str())
-        })
+        .and_then(|c| c.name("version").or_else(|| c.name("version_2")).map(|m| m.as_str()))
         .and_then(|raw| raw.parse::<u32>().ok());
 
     ParsedFilename { title_id, version }
@@ -156,7 +148,7 @@ pub fn classify_title_id(title_id: Option<&str>) -> ContentKind {
 }
 
 pub fn to_display_title_id(raw: Option<[char; 16]>) -> Option<String> {
-    raw.map(|chars| chars.into_iter().collect::<String>())
+    Some(raw?.into_iter().collect::<String>())
 }
 
 fn to_upper_hex_chars(raw: &str) -> Option<[char; 16]> {
@@ -181,16 +173,14 @@ fn to_upper_hex_chars(raw: &str) -> Option<[char; 16]> {
 mod tests {
     use std::path::PathBuf;
 
-    use super::{classify_title_id, parse_filename_metadata, Catalog, ContentFile, ContentKind};
+    use super::{Catalog, ContentFile, ContentKind, classify_title_id, parse_filename_metadata};
 
     #[test]
     fn parse_filename_extracts_title_id_and_version() {
         let parsed = parse_filename_metadata("My Game [0100ABCD12340000][v65536].nsp");
 
         assert_eq!(
-            parsed
-                .title_id
-                .map(|chars| chars.into_iter().collect::<String>()),
+            parsed.title_id.map(|chars| chars.into_iter().collect::<String>()),
             Some(String::from("0100ABCD12340000"))
         );
         assert_eq!(parsed.version, Some(65536));
@@ -201,28 +191,17 @@ mod tests {
         let parsed = parse_filename_metadata("0100ABCD12340800 v131072.nsp");
 
         assert_eq!(
-            parsed
-                .title_id
-                .map(|chars| chars.into_iter().collect::<String>()),
+            parsed.title_id.map(|chars| chars.into_iter().collect::<String>()),
             Some(String::from("0100ABCD12340800"))
         );
-        assert_eq!(parsed.version, Some(131072));
+        assert_eq!(parsed.version, Some(131_072));
     }
 
     #[test]
     fn classify_title_id_heuristics() {
-        assert_eq!(
-            classify_title_id(Some("0100ABCD12340000")),
-            ContentKind::Base
-        );
-        assert_eq!(
-            classify_title_id(Some("0100ABCD12340800")),
-            ContentKind::Update
-        );
-        assert_eq!(
-            classify_title_id(Some("0100ABCD12340001")),
-            ContentKind::Dlc
-        );
+        assert_eq!(classify_title_id(Some("0100ABCD12340000")), ContentKind::Base);
+        assert_eq!(classify_title_id(Some("0100ABCD12340800")), ContentKind::Update);
+        assert_eq!(classify_title_id(Some("0100ABCD12340001")), ContentKind::Dlc);
         assert_eq!(classify_title_id(None), ContentKind::Unknown);
     }
 

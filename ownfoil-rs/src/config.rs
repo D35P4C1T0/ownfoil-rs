@@ -10,12 +10,10 @@ use clap::Parser;
 use serde::Deserialize;
 use thiserror::Error;
 
+use crate::shop::{ShopConfig, validate_public_key_pem};
+
 #[derive(Debug, Parser)]
-#[command(
-    name = "ownfoil-rs",
-    version,
-    about = "Minimal CyberFoil-compatible Tinfoil game server"
-)]
+#[command(name = "ownfoil-rs", version, about = "Minimal CyberFoil-compatible Tinfoil game server")]
 pub struct Cli {
     #[arg(long, value_name = "ADDR")]
     pub bind: Option<SocketAddr>,
@@ -49,9 +47,10 @@ pub struct AppConfig {
     pub scan_interval_seconds: u64,
     pub data_dir: PathBuf,
     pub titledb: TitleDbConfig,
+    pub shop: ShopConfig,
 }
 
-/// TitleDB settings: region, language, refresh interval, optional URL override.
+/// `TitleDB` settings: region, language, refresh interval, optional URL override.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TitleDbConfig {
     pub enabled: bool,
@@ -82,15 +81,9 @@ impl Default for TitleDbConfig {
 #[derive(Debug, Error)]
 pub enum ConfigError {
     #[error("failed to read config file {path}: {source}")]
-    Read {
-        path: String,
-        source: std::io::Error,
-    },
+    Read { path: String, source: std::io::Error },
     #[error("invalid config in {path}: {source}")]
-    Parse {
-        path: String,
-        source: toml::de::Error,
-    },
+    Parse { path: String, source: toml::de::Error },
     #[error("invalid boolean value for env var {key}: {value}")]
     InvalidEnvBool { key: String, value: String },
     #[error("library root {path} does not exist or is not a directory")]
@@ -99,6 +92,8 @@ pub enum ConfigError {
     AuthFileNotFound { path: String },
     #[error("private shop requires --auth-file or auth_file in config")]
     AuthFileRequired,
+    #[error("invalid shop public key")]
+    InvalidShopPublicKey,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -111,6 +106,7 @@ struct FileConfig {
     insecure_admin_cookie: Option<bool>,
     scan_interval_seconds: Option<u64>,
     titledb: Option<TitleDbConfig>,
+    shop: Option<ShopConfig>,
 }
 
 impl AppConfig {
@@ -121,41 +117,48 @@ impl AppConfig {
         let env_public_shop = read_public_shop_env()?;
         let env_insecure_admin_cookie = read_insecure_admin_cookie_env()?;
 
-        let bind = cli
-            .bind
-            .or(from_file.bind)
-            .unwrap_or_else(|| SocketAddr::from(([0, 0, 0, 0], 8465)));
+        let bind =
+            cli.bind.or(from_file.bind).unwrap_or_else(|| SocketAddr::from(([0, 0, 0, 0], 8465)));
         let library_root = cli
             .library_root
             .or(from_file.library_root)
             .unwrap_or_else(|| PathBuf::from("./library"));
         let auth_file = cli.auth_file.or(from_file.auth_file);
         let public_shop = env_public_shop.or(from_file.public_shop).unwrap_or(false);
-        let insecure_admin_cookie = env_insecure_admin_cookie
-            .or(from_file.insecure_admin_cookie)
-            .unwrap_or(false);
-        let scan_interval_seconds = cli
-            .scan_interval_seconds
-            .or(from_file.scan_interval_seconds)
-            .unwrap_or(30)
-            .max(1);
+        let insecure_admin_cookie =
+            env_insecure_admin_cookie.or(from_file.insecure_admin_cookie).unwrap_or(false);
+        let scan_interval_seconds =
+            cli.scan_interval_seconds.or(from_file.scan_interval_seconds).unwrap_or(30).max(1);
 
         let data_dir = config_path
             .and_then(|p| p.parent())
-            .map(|p| p.join("data"))
-            .unwrap_or_else(|| PathBuf::from("./data"));
+            .map_or_else(|| PathBuf::from("./data"), |p| p.join("data"));
 
-        let titledb = from_runtime.or(from_file.titledb).unwrap_or_default();
+        let titledb = from_runtime.titledb.or(from_file.titledb).unwrap_or_default();
+        let mut shop = from_runtime.shop.or(from_file.shop).unwrap_or_default();
+        if let Some(value) = read_shop_encrypt_env()? {
+            shop.encrypt = value;
+        }
+        if let Some(value) = read_tinfoil_only_mode_env()? {
+            shop.tinfoil_only_mode = value;
+        }
+        if let Some(value) = read_shop_motd_env()? {
+            shop.motd = value;
+        }
+        if let Some(value) = read_shop_public_key_env()? {
+            shop.public_key = value;
+        }
 
         let config = Self {
             bind,
-            library_root: library_root.clone(),
+            library_root,
             auth_file,
             public_shop,
             insecure_admin_cookie,
             scan_interval_seconds,
             data_dir,
             titledb,
+            shop,
         };
 
         validate_config(&config)?;
@@ -171,15 +174,16 @@ fn validate_config(config: &AppConfig) -> Result<(), ConfigError> {
     }
 
     if !config.public_shop {
-        let auth_path = config
-            .auth_file
-            .as_ref()
-            .ok_or(ConfigError::AuthFileRequired)?;
+        let auth_path = config.auth_file.as_ref().ok_or(ConfigError::AuthFileRequired)?;
         if !auth_path.exists() {
-            return Err(ConfigError::AuthFileNotFound {
-                path: auth_path.display().to_string(),
-            });
+            return Err(ConfigError::AuthFileNotFound { path: auth_path.display().to_string() });
         }
+    }
+
+    if !config.shop.public_key.trim().is_empty()
+        && validate_public_key_pem(config.shop.public_key.trim()).is_err()
+    {
+        return Err(ConfigError::InvalidShopPublicKey);
     }
 
     Ok(())
@@ -190,39 +194,40 @@ fn read_file_config(path: Option<&Path>) -> Result<FileConfig, ConfigError> {
         return Ok(FileConfig::default());
     };
 
-    let raw = std::fs::read_to_string(path).map_err(|source| ConfigError::Read {
-        path: path.display().to_string(),
-        source,
-    })?;
+    let raw = std::fs::read_to_string(path)
+        .map_err(|source| ConfigError::Read { path: path.display().to_string(), source })?;
 
-    toml::from_str(&raw).map_err(|source| ConfigError::Parse {
-        path: path.display().to_string(),
-        source,
-    })
+    toml::from_str(&raw)
+        .map_err(|source| ConfigError::Parse { path: path.display().to_string(), source })
 }
 
-fn read_runtime_config(config_path: Option<&Path>) -> Result<Option<TitleDbConfig>, ConfigError> {
+#[derive(Debug, Default)]
+struct RuntimeConfigState {
+    titledb: Option<TitleDbConfig>,
+    shop: Option<ShopConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RuntimeConfig {
+    titledb: Option<TitleDbConfig>,
+    shop: Option<ShopConfig>,
+}
+
+fn read_runtime_config(config_path: Option<&Path>) -> Result<RuntimeConfigState, ConfigError> {
     let data_dir = config_path
         .and_then(|p| p.parent())
-        .map(|p| p.join("data"))
-        .unwrap_or_else(|| PathBuf::from("./data"));
+        .map_or_else(|| PathBuf::from("./data"), |p| p.join("data"));
     let runtime_path = data_dir.join("settings.toml");
     if !runtime_path.exists() {
-        return Ok(None);
+        return Ok(RuntimeConfigState::default());
     }
-    let raw = std::fs::read_to_string(&runtime_path).map_err(|source| ConfigError::Read {
-        path: runtime_path.display().to_string(),
-        source,
-    })?;
-    #[derive(Deserialize)]
-    struct RuntimeConfig {
-        titledb: Option<TitleDbConfig>,
-    }
+    let raw = std::fs::read_to_string(&runtime_path)
+        .map_err(|source| ConfigError::Read { path: runtime_path.display().to_string(), source })?;
     let parsed: RuntimeConfig = toml::from_str(&raw).map_err(|source| ConfigError::Parse {
         path: runtime_path.display().to_string(),
         source,
     })?;
-    Ok(parsed.titledb)
+    Ok(RuntimeConfigState { titledb: parsed.titledb, shop: parsed.shop })
 }
 
 fn read_public_shop_env() -> Result<Option<bool>, ConfigError> {
@@ -236,9 +241,48 @@ fn read_insecure_admin_cookie_env() -> Result<Option<bool>, ConfigError> {
     read_env_bool("OWNFOIL_INSECURE_ADMIN_COOKIE")
 }
 
+fn read_shop_encrypt_env() -> Result<Option<bool>, ConfigError> {
+    if let Some(value) = read_env_bool("OWNFOIL_SHOP_ENCRYPT")? {
+        return Ok(Some(value));
+    }
+    read_env_bool("AEROFOIL_SHOP_ENCRYPT")
+}
+
+fn read_tinfoil_only_mode_env() -> Result<Option<bool>, ConfigError> {
+    if let Some(value) = read_env_bool("OWNFOIL_TINFOIL_ONLY_MODE")? {
+        return Ok(Some(value));
+    }
+    read_env_bool("AEROFOIL_TINFOIL_ONLY_MODE")
+}
+
+fn read_shop_motd_env() -> Result<Option<String>, ConfigError> {
+    if let Some(value) = read_env_string("OWNFOIL_SHOP_MOTD")? {
+        return Ok(Some(value));
+    }
+    read_env_string("AEROFOIL_SHOP_MOTD")
+}
+
+fn read_shop_public_key_env() -> Result<Option<String>, ConfigError> {
+    if let Some(value) = read_env_string("OWNFOIL_SHOP_PUBLIC_KEY")? {
+        return Ok(Some(value));
+    }
+    read_env_string("AEROFOIL_SHOP_PUBLIC_KEY")
+}
+
 fn read_env_bool(key: &str) -> Result<Option<bool>, ConfigError> {
     match std::env::var(key) {
         Ok(value) => parse_bool_value(key, &value).map(Some),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => Err(ConfigError::InvalidEnvBool {
+            key: String::from(key),
+            value: String::from("<non-unicode>"),
+        }),
+    }
+}
+
+fn read_env_string(key: &str) -> Result<Option<String>, ConfigError> {
+    match std::env::var(key) {
+        Ok(value) => Ok(Some(value)),
         Err(std::env::VarError::NotPresent) => Ok(None),
         Err(std::env::VarError::NotUnicode(_)) => Err(ConfigError::InvalidEnvBool {
             key: String::from(key),
@@ -252,10 +296,7 @@ fn parse_bool_value(key: &str, raw: &str) -> Result<bool, ConfigError> {
     match normalized.as_str() {
         "1" | "true" | "yes" | "on" => Ok(true),
         "0" | "false" | "no" | "off" => Ok(false),
-        _ => Err(ConfigError::InvalidEnvBool {
-            key: String::from(key),
-            value: String::from(raw),
-        }),
+        _ => Err(ConfigError::InvalidEnvBool { key: String::from(key), value: String::from(raw) }),
     }
 }
 

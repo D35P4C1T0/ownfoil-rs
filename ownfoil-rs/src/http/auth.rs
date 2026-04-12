@@ -1,5 +1,5 @@
-use axum::http::header::AUTHORIZATION;
 use axum::http::HeaderMap;
+use axum::http::header::AUTHORIZATION;
 use base64::prelude::*;
 use tracing::{debug, warn};
 
@@ -34,9 +34,7 @@ pub fn ensure_authorized(
 }
 
 pub fn extract_basic_auth(headers: &HeaderMap) -> Option<(String, String)> {
-    let raw = headers
-        .get(AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())?;
+    let raw = headers.get(AUTHORIZATION).and_then(|value| value.to_str().ok())?;
     let mut parts = raw.split_whitespace();
     let scheme = parts.next()?;
     let encoded = parts.next()?;
