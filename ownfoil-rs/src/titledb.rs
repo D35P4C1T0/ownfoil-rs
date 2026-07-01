@@ -177,14 +177,16 @@ impl TitleDb {
         let Some(normalized) = normalize_title_id(title_id) else {
             return Vec::new();
         };
-        let guard = self.inner.read().await;
-        let mut out: Vec<_> = guard
-            .artifacts
-            .cnmts
-            .values()
-            .filter(|info| info.is_update_for(&normalized))
-            .cloned()
-            .collect();
+        let mut out: Vec<_> = {
+            let guard = self.inner.read().await;
+            guard
+                .artifacts
+                .cnmts
+                .values()
+                .filter(|info| info.is_update_for(&normalized))
+                .cloned()
+                .collect()
+        };
         out.sort_by(|a, b| a.title_id.cmp(&b.title_id));
         out
     }
@@ -194,14 +196,16 @@ impl TitleDb {
         let Some(normalized) = normalize_title_id(title_id) else {
             return Vec::new();
         };
-        let guard = self.inner.read().await;
-        let mut out: Vec<_> = guard
-            .artifacts
-            .cnmts
-            .values()
-            .filter(|info| info.is_dlc_for(&normalized))
-            .cloned()
-            .collect();
+        let mut out: Vec<_> = {
+            let guard = self.inner.read().await;
+            guard
+                .artifacts
+                .cnmts
+                .values()
+                .filter(|info| info.is_dlc_for(&normalized))
+                .cloned()
+                .collect()
+        };
         out.sort_by(|a, b| a.title_id.cmp(&b.title_id));
         out
     }
@@ -242,6 +246,7 @@ fn send_progress(tx: Option<&broadcast::Sender<String>>, msg: &str) {
 }
 
 /// Fetch and merge `TitleDB` data without holding the lock, then apply in a short write.
+#[allow(clippy::too_many_lines)]
 async fn do_refresh_without_lock(inner: &RwLock<TitleDbInner>) -> Result<(), TitleDbError> {
     let (enabled, region, lang, url_override, data_dir, progress_tx) = {
         let guard = inner.read().await;
@@ -354,8 +359,10 @@ async fn do_refresh_without_lock(inner: &RwLock<TitleDbInner>) -> Result<(), Tit
         Ok(Some(artifacts)) => {
             let counts =
                 (artifacts.versions.len(), artifacts.cnmts.len(), artifacts.languages.len());
-            let mut guard = inner.write().await;
-            guard.artifacts = artifacts;
+            {
+                let mut guard = inner.write().await;
+                guard.artifacts = artifacts;
+            }
             send_progress(
                 progress_tx.as_ref(),
                 &format!(
@@ -1130,8 +1137,8 @@ mod tests {
         }
 
         let first = versions.get("0100000000010000").expect("first title");
-        assert_eq!(first.latest_version, Some(262144));
-        assert_eq!(first.versions, vec![0, 65536, 131072, 262144]);
+        assert_eq!(first.latest_version, Some(262_144));
+        assert_eq!(first.versions, vec![0, 65_536, 131_072, 262_144]);
 
         assert_eq!(versions.get("0100000000020000").and_then(|info| info.latest_version), Some(42));
         assert_eq!(versions.get("0100000000030000").and_then(|info| info.latest_version), Some(7));
@@ -1160,7 +1167,7 @@ mod tests {
         let cnmts = parse_cnmts_json(cnmts).expect("cnmts parse");
         let update = cnmts.get("0100000000010800").expect("update cnmt");
         assert!(update.is_update_for("0100000000010000"));
-        assert_eq!(update.version, Some(65536));
+        assert_eq!(update.version, Some(65_536));
         assert_eq!(update.required_system_version, Some(256));
 
         let dlc = cnmts.get("0100000000011001").expect("dlc cnmt");
@@ -1180,7 +1187,7 @@ mod tests {
             Some("0100000000010000 131072"),
             Some(
                 r#"{
-                    "0100000000010800": {"type": "Patch", "baseId": "0100000000010000", "version": 131072},
+                "0100000000010800": {"type": "Patch", "baseId": "0100000000010000", "version": 131072},
                     "0100000000011001": {"type": "AddOnContent", "baseId": "0100000000010000", "version": 1}
                 }"#,
             ),
@@ -1189,10 +1196,10 @@ mod tests {
         .expect("artifact fixtures parse");
         let titledb = TitleDb::from_artifacts(artifacts);
 
-        assert_eq!(titledb.latest_version("0100000000010000").await, Some(131072));
+        assert_eq!(titledb.latest_version("0100000000010000").await, Some(131_072));
         assert_eq!(
             titledb.cnmt("0100000000010800").await.and_then(|info| info.version),
-            Some(131072)
+            Some(131_072)
         );
         assert_eq!(titledb.updates_for_title("0100000000010000").await.len(), 1);
         assert_eq!(titledb.dlc_for_title("0100000000010000").await.len(), 1);
