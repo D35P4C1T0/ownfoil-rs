@@ -4,13 +4,14 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
+use axum::body::Bytes;
 use axum::extract::{FromRequestParts, Path, Query, State};
 use axum::http::HeaderMap;
 use axum::http::Request;
 use axum::http::request::Parts;
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::{Html, IntoResponse, Redirect, Response};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use axum_extra::extract::Form;
 use axum_extra::extract::cookie::{Cookie, CookieJar};
@@ -106,8 +107,6 @@ pub fn router(state: AppState) -> Router {
     if governor_conf.is_none() {
         warn!("governor config invalid; rate limiting disabled");
     }
-    let auth_enabled = state.auth.is_enabled();
-
     let app = Router::new()
         .route("/", get(shop_root))
         .route("/health", get(health))
@@ -125,23 +124,37 @@ pub fn router(state: AppState) -> Router {
         .route("/api/titles", get(catalog_all))
         .route("/api/index", get(catalog_all))
         .route("/api/shop", get(shop_root))
+        .route("/api/settings", get(settings_get).post(settings_post))
+        .route("/api/settings/titles", post(settings_titles_post))
+        .route("/api/settings/shop", post(settings_shop_post))
+        .route(
+            "/api/settings/library/paths",
+            get(settings_library_paths_get)
+                .post(settings_library_paths_post)
+                .delete(settings_library_paths_delete),
+        )
+        .route("/api/settings/library/management", post(settings_library_management_post))
+        .route("/api/settings/scheduler", post(settings_scheduler_post))
+        .route("/api/upload", post(upload_post))
+        .route("/api/users", get(users_get))
+        .route("/api/user", delete(user_delete))
+        .route("/api/user/signup", post(user_signup_post))
         .route("/shop", get(shop_root))
         .route("/index", get(catalog_all))
         .route("/titles", get(catalog_all))
-        .route("/download/{*path}", get(download));
-
-    let app = if auth_enabled {
-        app.route("/admin", get(admin_ui))
-            .route("/admin/settings", get(settings_ui))
-            .route("/admin/login", get(login_page).post(login_post))
-            .route("/admin/logout", get(logout))
-            .route("/api/settings", get(settings_get).post(settings_post))
-            .route("/api/settings/refresh", post(settings_refresh))
-            .route("/api/settings/titledb/progress", get(titledb_progress_sse))
-            .route("/api/settings/titledb/test", get(titledb_test_connectivity))
-    } else {
-        app
-    };
+        .route("/download/{*path}", get(download))
+        .route("/login", get(login_page).post(login_post))
+        .route("/logout", get(logout))
+        .route("/settings", get(settings_ui))
+        .route("/setup", get(setup_page))
+        .route("/profile", get(profile_page))
+        .route("/admin", get(admin_ui))
+        .route("/admin/settings", get(settings_ui))
+        .route("/admin/login", get(login_page).post(login_post))
+        .route("/admin/logout", get(logout))
+        .route("/api/settings/refresh", post(settings_refresh))
+        .route("/api/settings/titledb/progress", get(titledb_progress_sse))
+        .route("/api/settings/titledb/test", get(titledb_test_connectivity));
 
     let app = app
         .layer(tower_http::request_id::SetRequestIdLayer::new(
@@ -510,11 +523,34 @@ async fn settings_ui(State(state): State<AppState>, jar: CookieJar) -> Result<Re
     Ok(Html(include_str!("settings.html")).into_response())
 }
 
+async fn setup_page(State(state): State<AppState>, jar: CookieJar) -> Result<Response, ApiError> {
+    ensure_admin_enabled(&state)?;
+    let session_valid =
+        jar.get(SESSION_COOKIE).and_then(|c| state.sessions.get(c.value())).is_some();
+    if !session_valid {
+        return Ok(Redirect::to("/login").into_response());
+    }
+    Ok(Redirect::to("/settings").into_response())
+}
+
+async fn profile_page(State(state): State<AppState>, jar: CookieJar) -> Result<Response, ApiError> {
+    ensure_admin_enabled(&state)?;
+    let session_valid =
+        jar.get(SESSION_COOKIE).and_then(|c| state.sessions.get(c.value())).is_some();
+    if !session_valid {
+        return Ok(Redirect::to("/login").into_response());
+    }
+    Ok(Redirect::to("/admin").into_response())
+}
+
 #[derive(serde::Serialize)]
 struct SettingsResponse {
+    success: bool,
     titledb: TitleDbConfig,
     titledb_entries: usize,
     titledb_last_refresh: Option<String>,
+    library_paths: Vec<String>,
+    persistence: &'static str,
 }
 
 #[derive(serde::Deserialize)]
@@ -537,9 +573,12 @@ async fn settings_get(
         .await
         .map(|t| humantime::format_duration(t.elapsed()).to_string());
     Ok(Json(SettingsResponse {
+        success: true,
         titledb,
         titledb_entries: entries,
         titledb_last_refresh: last_refresh,
+        library_paths: vec![state.library_root.display().to_string()],
+        persistence: "runtime",
     }))
 }
 
@@ -559,6 +598,167 @@ async fn settings_post(
         state.titledb.refresh();
     }
     Ok(Json(serde_json::json!({ "success": true })))
+}
+
+async fn settings_titles_post(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    ensure_admin_enabled(&state)?;
+    ensure_authorized(&state, &headers, session_token(&jar))?;
+    Ok(Json(serde_json::json!({
+        "success": false,
+        "error": "title settings persistence is not available yet",
+        "persistence_required": true
+    })))
+}
+
+async fn settings_shop_post(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    ensure_admin_enabled(&state)?;
+    ensure_authorized(&state, &headers, session_token(&jar))?;
+    Ok(Json(serde_json::json!({
+        "success": false,
+        "error": "shop settings persistence is not available yet",
+        "persistence_required": true
+    })))
+}
+
+async fn settings_library_paths_get(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    ensure_admin_enabled(&state)?;
+    ensure_authorized(&state, &headers, session_token(&jar))?;
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "paths": [state.library_root.display().to_string()],
+        "persistence": "runtime"
+    })))
+}
+
+async fn settings_library_paths_post(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    ensure_admin_enabled(&state)?;
+    ensure_authorized(&state, &headers, session_token(&jar))?;
+    Ok(Json(serde_json::json!({
+        "success": false,
+        "error": "library path persistence is not available yet",
+        "persistence_required": true
+    })))
+}
+
+async fn settings_library_paths_delete(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    ensure_admin_enabled(&state)?;
+    ensure_authorized(&state, &headers, session_token(&jar))?;
+    Ok(Json(serde_json::json!({
+        "success": false,
+        "error": "library path persistence is not available yet",
+        "persistence_required": true
+    })))
+}
+
+async fn settings_library_management_post(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    ensure_admin_enabled(&state)?;
+    ensure_authorized(&state, &headers, session_token(&jar))?;
+    Ok(Json(serde_json::json!({
+        "success": false,
+        "error": "library management requires persistent storage",
+        "persistence_required": true
+    })))
+}
+
+async fn settings_scheduler_post(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    ensure_admin_enabled(&state)?;
+    ensure_authorized(&state, &headers, session_token(&jar))?;
+    Ok(Json(serde_json::json!({
+        "success": false,
+        "error": "scheduler settings persistence is not available yet",
+        "persistence_required": true
+    })))
+}
+
+async fn upload_post(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+    _body: Bytes,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    ensure_admin_enabled(&state)?;
+    ensure_authorized(&state, &headers, session_token(&jar))?;
+    Ok(Json(serde_json::json!({
+        "success": false,
+        "error": "upload persistence is not available yet",
+        "persistence_required": true
+    })))
+}
+
+async fn users_get(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    ensure_admin_enabled(&state)?;
+    ensure_authorized(&state, &headers, session_token(&jar))?;
+    let users = state
+        .auth
+        .usernames()
+        .into_iter()
+        .map(|username| serde_json::json!({ "username": username, "admin": true }))
+        .collect::<Vec<_>>();
+    Ok(Json(serde_json::json!({
+        "success": true,
+        "users": users,
+        "persistence": "auth_file"
+    })))
+}
+
+async fn user_delete(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    ensure_admin_enabled(&state)?;
+    ensure_authorized(&state, &headers, session_token(&jar))?;
+    Ok(Json(serde_json::json!({
+        "success": false,
+        "error": "user deletion requires persistent user storage",
+        "persistence_required": true
+    })))
+}
+
+async fn user_signup_post(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    ensure_admin_enabled(&state)?;
+    ensure_authorized(&state, &headers, session_token(&jar))?;
+    Ok(Json(serde_json::json!({
+        "success": false,
+        "error": "user signup requires persistent user storage",
+        "persistence_required": true
+    })))
 }
 
 async fn titledb_progress_sse(

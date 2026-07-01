@@ -32,3 +32,14 @@
 - Metadata extraction is filename-based heuristics only (no NCA/NSP deep metadata parsing).
 - Range handling supports single ranges; multi-range requests are rejected.
 - JSON response schema is compatibility-oriented, not a full reimplementation of every Python route shape.
+
+## Compatibility Harness
+
+- `tests/compat_route_matrix.rs` tracks the upstream Ownfoil route surface from `ROADMAP.md`.
+- Passing tests document the current route/response shapes for Tinfoil root payloads, CyberFoil sections, `/api/titles` as the current catalog alias, and the empty save-sync stub.
+- Ignored tests intentionally name non-blocking parity gaps:
+  - browser pages: `/settings`, `/setup`, `/profile`, `/login`, `/logout`
+  - settings APIs: `/api/settings`, `/api/settings/titles`, `/api/settings/shop`, library path/management routes, scheduler route
+  - user/upload/scan APIs: `/api/users`, `/api/user`, `/api/user/signup`, `/api/upload`, `/api/library/scan`
+  - upstream `/api/titles` `{ total, games }` response shape
+  - persistent state for libraries, files, titles, apps, users, download counts, and identification status

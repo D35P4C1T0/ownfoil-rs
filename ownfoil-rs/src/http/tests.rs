@@ -16,7 +16,7 @@ mod tests {
     use crate::catalog::{Catalog, ContentFile, ContentKind};
     use crate::config::TitleDbConfig;
     use crate::shop::ShopConfig;
-    use crate::titledb::TitleDb;
+    use crate::titledb::{TitleDb, TitleInfo};
 
     use crate::http::{AppState, router, state::SessionStore};
 
@@ -74,6 +74,28 @@ mod tests {
             auth: Arc::new(auth),
             shop: Arc::new(shop),
             insecure_admin_cookie,
+            sessions,
+            titledb,
+            data_dir,
+            titledb_progress_tx: progress_tx,
+        }
+    }
+
+    fn test_app_state_with_titledb(
+        catalog: Catalog,
+        library_root: PathBuf,
+        auth: AuthSettings,
+        sessions: SessionStore,
+        titledb: TitleDb,
+    ) -> AppState {
+        let data_dir = std::env::temp_dir().join("ownfoil-test");
+        let (progress_tx, _) = tokio::sync::broadcast::channel(1);
+        AppState {
+            catalog: Arc::new(RwLock::new(catalog)),
+            library_root,
+            auth: Arc::new(auth),
+            shop: Arc::new(ShopConfig::default()),
+            insecure_admin_cookie: false,
             sessions,
             titledb,
             data_dir,
@@ -189,6 +211,78 @@ mod tests {
         let authorized =
             server.get("/api/catalog").add_header("Authorization", "YWRtaW46c2VjcmV0").await;
         assert_eq!(authorized.status_code(), StatusCode::UNAUTHORIZED);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn auth_settings_compat_routes_require_admin_auth() -> Result<()> {
+        let state = test_app_state(
+            Catalog::from_files(Vec::new()),
+            std::env::temp_dir(),
+            AuthSettings::from_users(vec![AuthUser {
+                username: String::from("admin"),
+                password: String::from("secret"),
+            }]),
+            SessionStore::new(24),
+        );
+        let server = TestServer::new(router(state))?;
+
+        let unauthorized = server.get("/api/settings").await;
+        assert_eq!(unauthorized.status_code(), StatusCode::UNAUTHORIZED);
+
+        let settings =
+            server.get("/api/settings").add_header("Authorization", "Basic YWRtaW46c2VjcmV0").await;
+        assert_eq!(settings.status_code(), StatusCode::OK);
+        let body: Value = settings.json();
+        assert_eq!(body.get("success"), Some(&Value::Bool(true)));
+        assert_eq!(body.get("library_paths").and_then(Value::as_array).map(Vec::len), Some(1));
+
+        let users =
+            server.get("/api/users").add_header("Authorization", "Basic YWRtaW46c2VjcmV0").await;
+        assert_eq!(users.status_code(), StatusCode::OK);
+        let body: Value = users.json();
+        assert_eq!(body.get("success"), Some(&Value::Bool(true)));
+        assert_eq!(body.pointer("/users/0/username"), Some(&Value::String("admin".into())));
+
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn auth_settings_stub_routes_report_persistence_gaps() -> Result<()> {
+        let state = test_app_state(
+            Catalog::from_files(Vec::new()),
+            std::env::temp_dir(),
+            AuthSettings::from_users(vec![AuthUser {
+                username: String::from("admin"),
+                password: String::from("secret"),
+            }]),
+            SessionStore::new(24),
+        );
+        let server = TestServer::new(router(state))?;
+
+        for path in [
+            "/api/settings/titles",
+            "/api/settings/shop",
+            "/api/settings/library/paths",
+            "/api/settings/library/management",
+            "/api/settings/scheduler",
+            "/api/upload",
+            "/api/user/signup",
+        ] {
+            let response =
+                server.post(path).add_header("Authorization", "Basic YWRtaW46c2VjcmV0").await;
+            assert_eq!(response.status_code(), StatusCode::OK, "{path}");
+            let body: Value = response.json();
+            assert_eq!(body.get("success"), Some(&Value::Bool(false)), "{path}");
+            assert_eq!(body.get("persistence_required"), Some(&Value::Bool(true)), "{path}");
+        }
+
+        let response =
+            server.delete("/api/user").add_header("Authorization", "Basic YWRtaW46c2VjcmV0").await;
+        assert_eq!(response.status_code(), StatusCode::OK);
+        let body: Value = response.json();
+        assert_eq!(body.get("success"), Some(&Value::Bool(false)));
+
         Ok(())
     }
 
@@ -644,6 +738,58 @@ mod tests {
         assert_eq!(response.status_code(), StatusCode::OK);
         assert_eq!(response.header("content-type"), "image/svg+xml");
         assert_eq!(response.header("cache-control"), "public, max-age=604800, immutable");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn shop_icon_route_redirects_to_titledb_icon_url() -> Result<()> {
+        let titledb = TitleDb::from_entries(vec![(
+            String::from("0100000000000000"),
+            TitleInfo {
+                icon_url: Some(String::from("https://example.test/icon.png")),
+                banner_url: None,
+                name: Some(String::from("Example Game")),
+            },
+        )]);
+        let state = test_app_state_with_titledb(
+            Catalog::from_files(Vec::new()),
+            std::env::temp_dir(),
+            AuthSettings::from_users(Vec::new()),
+            SessionStore::new(24),
+            titledb,
+        );
+
+        let server = TestServer::new(router(state))?;
+        let response = server.get("/api/shop/icon/0100000000000000.png").await;
+
+        assert_eq!(response.status_code(), StatusCode::TEMPORARY_REDIRECT);
+        assert_eq!(response.header("location"), "https://example.test/icon.png");
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn shop_banner_route_redirects_to_titledb_banner_url() -> Result<()> {
+        let titledb = TitleDb::from_entries(vec![(
+            String::from("0100000000000000"),
+            TitleInfo {
+                icon_url: None,
+                banner_url: Some(String::from("https://example.test/banner.jpg")),
+                name: Some(String::from("Example Game")),
+            },
+        )]);
+        let state = test_app_state_with_titledb(
+            Catalog::from_files(Vec::new()),
+            std::env::temp_dir(),
+            AuthSettings::from_users(Vec::new()),
+            SessionStore::new(24),
+            titledb,
+        );
+
+        let server = TestServer::new(router(state))?;
+        let response = server.get("/api/shop/banner/0100000000000000.png").await;
+
+        assert_eq!(response.status_code(), StatusCode::TEMPORARY_REDIRECT);
+        assert_eq!(response.header("location"), "https://example.test/banner.jpg");
         Ok(())
     }
 
