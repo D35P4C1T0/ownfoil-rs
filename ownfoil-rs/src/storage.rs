@@ -1,4 +1,4 @@
-//! Persistent SQLite storage for Ownfoil concepts.
+//! Persistent `SQLite` storage for Ownfoil concepts.
 //!
 //! This module is intentionally not wired into HTTP state yet. It defines the
 //! durable schema and a small async-friendly API that route handlers can adopt
@@ -68,6 +68,7 @@ pub enum IdentificationStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::struct_field_names, clippy::struct_excessive_bools)]
 pub struct Title {
     pub title_id: String,
     pub have_base: bool,
@@ -76,6 +77,7 @@ pub struct Title {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::struct_field_names)]
 pub struct App {
     pub id: i64,
     pub title_id: String,
@@ -95,6 +97,7 @@ pub enum AppType {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct User {
     pub id: i64,
     pub username: String,
@@ -106,6 +109,7 @@ pub struct User {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct NewUser {
     pub username: String,
     pub password_hash: String,
@@ -144,12 +148,12 @@ impl Storage {
     pub async fn upsert_library(&self, library: NewLibrary) -> Result<Library> {
         self.with_connection(move |conn| {
             conn.execute(
-                r#"
+                r"
                 INSERT INTO libraries (path, last_scan)
                 VALUES (?1, ?2)
                 ON CONFLICT(path) DO UPDATE SET
                     last_scan = excluded.last_scan
-                "#,
+                ",
                 params![library.path, library.last_scan],
             )?;
             library_by_path(conn, &library.path)
@@ -206,7 +210,7 @@ impl Storage {
     pub async fn upsert_file(&self, file: NewStoredFile) -> Result<StoredFile> {
         self.with_connection(move |conn| {
             conn.execute(
-                r#"
+                r"
                 INSERT INTO files (
                     library_id,
                     path,
@@ -231,7 +235,7 @@ impl Storage {
                     download_count = excluded.download_count,
                     identification_status = excluded.identification_status,
                     title_id = excluded.title_id
-                "#,
+                ",
                 params![
                     file.library_id,
                     file.path,
@@ -313,7 +317,7 @@ impl Storage {
     pub async fn upsert_user(&self, user: NewUser) -> Result<User> {
         self.with_connection(move |conn| {
             conn.execute(
-                r#"
+                r"
                 INSERT INTO users (
                     username,
                     password_hash,
@@ -329,7 +333,7 @@ impl Storage {
                     can_upload = excluded.can_upload,
                     can_download = excluded.can_download,
                     enabled = excluded.enabled
-                "#,
+                ",
                 params![
                     user.username,
                     user.password_hash,
@@ -400,7 +404,7 @@ impl Storage {
 }
 
 impl IdentificationStatus {
-    fn as_str(&self) -> &'static str {
+    const fn as_str(&self) -> &'static str {
         match self {
             Self::Unknown => "unknown",
             Self::Identified => "identified",
@@ -421,7 +425,7 @@ impl IdentificationStatus {
 
 impl AppType {
     #[allow(dead_code)]
-    fn as_str(&self) -> &'static str {
+    const fn as_str(&self) -> &'static str {
         match self {
             Self::Base => "base",
             Self::Update => "update",
@@ -449,7 +453,7 @@ fn open_connection(path: &Path) -> rusqlite::Result<Connection> {
 
 fn initialize_schema(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(
-        r#"
+        r"
         CREATE TABLE IF NOT EXISTS libraries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             path TEXT NOT NULL UNIQUE,
@@ -499,7 +503,7 @@ fn initialize_schema(conn: &Connection) -> rusqlite::Result<()> {
             can_download INTEGER NOT NULL DEFAULT 1,
             enabled INTEGER NOT NULL DEFAULT 1
         );
-        "#,
+        ",
     )
 }
 
@@ -562,7 +566,7 @@ fn read_user(row: &rusqlite::Row<'_>) -> rusqlite::Result<User> {
 
 fn file_select(clause: &str) -> String {
     format!(
-        r#"
+        r"
         SELECT
             id,
             library_id,
@@ -578,13 +582,13 @@ fn file_select(clause: &str) -> String {
             title_id
         FROM files
         {clause}
-        "#
+        "
     )
 }
 
 fn user_select(clause: &str) -> String {
     format!(
-        r#"
+        r"
         SELECT
             id,
             username,
@@ -595,7 +599,7 @@ fn user_select(clause: &str) -> String {
             enabled
         FROM users
         {clause}
-        "#
+        "
     )
 }
 

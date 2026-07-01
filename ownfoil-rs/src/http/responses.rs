@@ -283,7 +283,7 @@ pub async fn build_shop_sections_payload(
         .chain(dlc_items_full.iter())
         .cloned()
         .collect();
-    all_items.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    all_items.sort_by_key(|item| item.name.to_lowercase());
     let all_total = all_items.len();
 
     let new_items = base_items.iter().take(limit).cloned().collect::<Vec<_>>();
@@ -346,10 +346,7 @@ async fn resolve_title_map(
 
     let results = futures_util::future::join_all(ids.iter().map(|id| titledb.lookup(id))).await;
 
-    ids.into_iter()
-        .zip(results.into_iter())
-        .filter_map(|(id, info)| info.map(|i| (id, i)))
-        .collect()
+    ids.into_iter().zip(results).filter_map(|(id, info)| info.map(|i| (id, i))).collect()
 }
 
 fn collect_base_items(
@@ -361,7 +358,7 @@ fn collect_base_items(
         .filter(|(_, file)| matches!(file.kind, ContentKind::Base | ContentKind::Unknown))
         .map(|(idx, file)| to_shop_section_item(*idx, file, title_map))
         .collect();
-    items.sort_by(|a, b| b.file_id.cmp(&a.file_id));
+    items.sort_by_key(|item| std::cmp::Reverse(item.file_id));
     items
 }
 
