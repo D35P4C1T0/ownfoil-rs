@@ -22,6 +22,7 @@ mod http;
 mod scanner;
 mod serve_files;
 mod shop;
+mod storage;
 mod titledb;
 
 use std::net::SocketAddr;

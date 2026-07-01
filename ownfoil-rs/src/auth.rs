@@ -63,6 +63,10 @@ impl AuthSettings {
         self.users.len()
     }
 
+    pub fn usernames(&self) -> Vec<String> {
+        self.users.keys().cloned().collect()
+    }
+
     pub fn is_authorized(&self, username: &str, password: &str) -> bool {
         self.users.get(username).is_some_and(|known_password| {
             let a = password.as_bytes();
