@@ -28,5 +28,5 @@ This integration-preview release ports the pinned Ownfoil feature set to Rust.
 ### Validation
 
 See [VALIDATION.md](VALIDATION.md). Switch-client testing, the complete upstream
-golden matrix, hosted multi-architecture publication, and a complete live TitleDB
-artifact refresh remain external validation gates.
+golden matrix, and a complete live TitleDB artifact refresh remain external
+validation gates.
