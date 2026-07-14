@@ -68,6 +68,8 @@ pub struct SectionInfo {
 pub struct ShopRootResponse {
     pub success: String,
     pub files: Vec<ShopRootFile>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub referrer: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -201,7 +203,7 @@ pub fn entry_to_api(file: &ContentFile) -> ApiEntry {
         .join("/");
 
     ApiEntry {
-        id: rel.to_string(),
+        id: if file.id == 0 { rel.to_string() } else { file.id.to_string() },
         name: file.name.clone(),
         title_id: file.title_id.clone(),
         titleid: file.title_id.clone(),
@@ -211,7 +213,11 @@ pub fn entry_to_api(file: &ContentFile) -> ApiEntry {
         kind: file.kind,
         content_type: file.kind,
         size: file.size,
-        url: format!("/download/{encoded_segments}"),
+        url: if file.id == 0 {
+            format!("/download/{encoded_segments}")
+        } else {
+            shop_game_url(file.id, &file.name)
+        },
     }
 }
 
@@ -231,7 +237,7 @@ pub fn build_shop_root_files(files: &[ContentFile]) -> Vec<ShopRootFile> {
         .iter()
         .enumerate()
         .map(|(index, file)| ShopRootFile {
-            url: shop_game_url(index + 1, &file.name),
+            url: shop_game_url(stable_file_id(index, file), &file.name),
             size: file.size,
         })
         .collect()
@@ -265,7 +271,8 @@ pub async fn build_shop_sections_payload(
     limit: usize,
     titledb: &TitleDb,
 ) -> ShopSectionsResponse {
-    let indexed: Vec<_> = files.iter().enumerate().map(|(i, f)| (i + 1, f)).collect();
+    let indexed: Vec<_> =
+        files.iter().enumerate().map(|(i, f)| (stable_file_id(i, f), f)).collect();
 
     let title_map = resolve_title_map(&indexed, titledb).await;
 
@@ -331,6 +338,266 @@ pub async fn build_shop_sections_payload(
             },
         ],
     }
+}
+
+#[allow(clippy::too_many_lines)]
+pub async fn build_upstream_titles_response(
+    files: &[ContentFile],
+    titledb: &TitleDb,
+) -> serde_json::Value {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    let expanded_files = files
+        .iter()
+        .flat_map(|file| {
+            if file.identified_contents.is_empty() {
+                vec![file.clone()]
+            } else {
+                file.identified_contents
+                    .iter()
+                    .map(|identity| {
+                        let mut expanded = file.clone();
+                        expanded.title_id = Some(identity.app_id.clone());
+                        expanded.version = Some(identity.version);
+                        expanded.kind = identity.kind;
+                        expanded.identified_contents.clear();
+                        expanded
+                    })
+                    .collect()
+            }
+        })
+        .collect::<Vec<_>>();
+    let files = expanded_files.as_slice();
+
+    let mut owned_updates: BTreeMap<String, Vec<u32>> = BTreeMap::new();
+    let mut owned_dlcs: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for file in files {
+        let Some(base_id) = derive_base_title_id(file.kind, file.title_id.as_deref()) else {
+            continue;
+        };
+        match file.kind {
+            ContentKind::Update => {
+                owned_updates.entry(base_id).or_default().push(file.version.unwrap_or(0));
+            }
+            ContentKind::Dlc => {
+                if let Some(app_id) = &file.title_id {
+                    owned_dlcs.entry(base_id).or_default().insert(app_id.clone());
+                }
+            }
+            ContentKind::Base | ContentKind::Unknown => {}
+        }
+    }
+
+    let mut selected: BTreeMap<String, &ContentFile> = BTreeMap::new();
+    for file in files.iter().filter(|file| file.kind != ContentKind::Update) {
+        let key = file.title_id.clone().unwrap_or_else(|| file.name.clone());
+        let replace = selected
+            .get(&key)
+            .map_or(true, |current| file.version.unwrap_or(0) > current.version.unwrap_or(0));
+        if replace {
+            selected.insert(key, file);
+        }
+    }
+
+    let mut games = Vec::with_capacity(selected.len());
+    for file in selected.into_values() {
+        let app_id = file.title_id.clone().unwrap_or_else(|| file.name.clone());
+        let base_id = derive_base_title_id(file.kind, file.title_id.as_deref())
+            .unwrap_or_else(|| app_id.clone());
+        let metadata = titledb.lookup(&app_id).await;
+        let base_metadata = if file.kind == ContentKind::Dlc {
+            titledb.lookup(&base_id).await
+        } else {
+            metadata.clone()
+        };
+        let name = metadata
+            .as_ref()
+            .and_then(|info| info.name.clone())
+            .unwrap_or_else(|| file.name.clone());
+        let title_name = base_metadata
+            .as_ref()
+            .and_then(|info| info.name.clone())
+            .unwrap_or_else(|| name.clone());
+        let icon = metadata.as_ref().and_then(|info| info.icon_url.clone()).unwrap_or_default();
+        let banner = metadata
+            .as_ref()
+            .and_then(|info| info.banner_url.clone())
+            .unwrap_or_else(|| "//placehold.it/400x200".to_string());
+        let versions = if file.kind == ContentKind::Dlc {
+            files
+                .iter()
+                .filter(|candidate| {
+                    candidate.kind == ContentKind::Dlc
+                        && candidate.title_id.as_deref() == file.title_id.as_deref()
+                })
+                .map(|candidate| {
+                    serde_json::json!({
+                        "version": candidate.version.unwrap_or(0),
+                        "owned": true,
+                        "release_date": "Unknown"
+                    })
+                })
+                .collect::<Vec<_>>()
+        } else {
+            let mut known =
+                titledb.versions(&base_id).await.map(|info| info.versions).unwrap_or_default();
+            known.extend(
+                owned_updates.get(&base_id).into_iter().flatten().map(|value| u64::from(*value)),
+            );
+            known.sort_unstable();
+            known.dedup();
+            known
+                .into_iter()
+                .map(|version| {
+                    let owned = owned_updates.get(&base_id).is_some_and(|versions| {
+                        versions.iter().any(|value| u64::from(*value) == version)
+                    });
+                    serde_json::json!({
+                        "version": version,
+                        "owned": owned,
+                        "release_date": "Unknown"
+                    })
+                })
+                .collect::<Vec<_>>()
+        };
+        let latest_known = versions
+            .iter()
+            .filter_map(|version| version.get("version").and_then(serde_json::Value::as_u64))
+            .max();
+        let latest_owned = versions
+            .iter()
+            .filter(|version| version.get("owned") == Some(&serde_json::Value::Bool(true)))
+            .filter_map(|version| version.get("version").and_then(serde_json::Value::as_u64))
+            .max();
+        let expected_dlcs = titledb.dlc_for_title(&base_id).await;
+        let owned_dlc_ids = owned_dlcs.get(&base_id);
+        let has_all_dlcs = expected_dlcs.is_empty()
+            || expected_dlcs
+                .iter()
+                .all(|dlc| owned_dlc_ids.is_some_and(|owned| owned.contains(&dlc.title_id)));
+        let has_base = files.iter().any(|candidate| {
+            candidate.kind == ContentKind::Base
+                && derive_base_title_id(candidate.kind, candidate.title_id.as_deref()).as_deref()
+                    == Some(base_id.as_str())
+        });
+
+        games.push(serde_json::json!({
+            "id": app_id,
+            "title_id": base_id,
+            "app_id": app_id,
+            "app_version": file.version.unwrap_or(0),
+            "app_type": app_type_for_kind(file.kind),
+            "owned": true,
+            "name": name,
+            "title_id_name": title_name,
+            "bannerUrl": banner,
+            "iconUrl": icon,
+            "category": "",
+            "has_base": has_base,
+            "has_latest_version": latest_known.is_none() || latest_owned >= latest_known,
+            "has_all_dlcs": has_all_dlcs,
+            "version": versions
+        }));
+    }
+
+    let base_ids = files
+        .iter()
+        .filter_map(|file| derive_base_title_id(file.kind, file.title_id.as_deref()))
+        .collect::<BTreeSet<_>>();
+    for base_id in base_ids {
+        let has_base_entry = games.iter().any(|game| {
+            game.get("app_type").and_then(serde_json::Value::as_str) == Some("BASE")
+                && game.get("title_id").and_then(serde_json::Value::as_str)
+                    == Some(base_id.as_str())
+        });
+        if !has_base_entry {
+            let metadata = titledb.lookup(&base_id).await;
+            let name = metadata
+                .as_ref()
+                .and_then(|info| info.name.clone())
+                .unwrap_or_else(|| "Unrecognized".to_string());
+            let mut known =
+                titledb.versions(&base_id).await.map(|info| info.versions).unwrap_or_default();
+            known.extend(
+                owned_updates
+                    .get(&base_id)
+                    .into_iter()
+                    .flatten()
+                    .map(|version| u64::from(*version)),
+            );
+            known.sort_unstable();
+            known.dedup();
+            let versions = known
+                .into_iter()
+                .map(|version| {
+                    let owned = owned_updates.get(&base_id).is_some_and(|owned| {
+                        owned.iter().any(|candidate| u64::from(*candidate) == version)
+                    });
+                    serde_json::json!({
+                        "version": version,
+                        "owned": owned,
+                        "release_date": "Unknown"
+                    })
+                })
+                .collect::<Vec<_>>();
+            games.push(serde_json::json!({
+                "id": base_id,
+                "title_id": base_id,
+                "app_id": base_id,
+                "app_version": 0,
+                "app_type": "BASE",
+                "owned": false,
+                "name": name,
+                "title_id_name": name,
+                "bannerUrl": metadata.as_ref().and_then(|info| info.banner_url.clone()).unwrap_or_else(|| "//placehold.it/400x200".to_string()),
+                "iconUrl": metadata.as_ref().and_then(|info| info.icon_url.clone()).unwrap_or_default(),
+                "category": "",
+                "has_base": false,
+                "has_latest_version": false,
+                "has_all_dlcs": titledb.dlc_for_title(&base_id).await.is_empty(),
+                "version": versions
+            }));
+        }
+
+        for dlc in titledb.dlc_for_title(&base_id).await {
+            if games.iter().any(|game| {
+                game.get("app_id").and_then(serde_json::Value::as_str)
+                    == Some(dlc.title_id.as_str())
+            }) {
+                continue;
+            }
+            let metadata = titledb.lookup(&dlc.title_id).await;
+            let title_metadata = titledb.lookup(&base_id).await;
+            let version = dlc.version.unwrap_or(0);
+            games.push(serde_json::json!({
+                "id": dlc.title_id,
+                "title_id": base_id,
+                "app_id": dlc.title_id,
+                "app_version": version,
+                "app_type": "DLC",
+                "owned": false,
+                "name": metadata.as_ref().and_then(|info| info.name.clone()).unwrap_or_else(|| "Unrecognized".to_string()),
+                "title_id_name": title_metadata.as_ref().and_then(|info| info.name.clone()).unwrap_or_else(|| "Unrecognized".to_string()),
+                "bannerUrl": metadata.as_ref().and_then(|info| info.banner_url.clone()).unwrap_or_else(|| "//placehold.it/400x200".to_string()),
+                "iconUrl": metadata.as_ref().and_then(|info| info.icon_url.clone()).unwrap_or_default(),
+                "category": "",
+                "has_base": false,
+                "has_latest_version": false,
+                "has_all_dlcs": false,
+                "version": [{"version": version, "owned": false, "release_date": "Unknown"}]
+            }));
+        }
+    }
+    games.sort_by(|left, right| {
+        left.get("title_id_name")
+            .and_then(serde_json::Value::as_str)
+            .cmp(&right.get("title_id_name").and_then(serde_json::Value::as_str))
+    });
+    serde_json::json!({ "total": games.len(), "games": games })
+}
+
+const fn stable_file_id(index: usize, file: &ContentFile) -> usize {
+    if file.id == 0 { index + 1 } else { file.id }
 }
 
 async fn resolve_title_map(
@@ -419,7 +686,7 @@ fn to_shop_section_item(
     }
 }
 
-const fn app_type_for_kind(kind: ContentKind) -> &'static str {
+pub const fn app_type_for_kind(kind: ContentKind) -> &'static str {
     match kind {
         ContentKind::Base | ContentKind::Unknown => "BASE",
         ContentKind::Update => "UPDATE",
@@ -427,7 +694,7 @@ const fn app_type_for_kind(kind: ContentKind) -> &'static str {
     }
 }
 
-fn derive_base_title_id(kind: ContentKind, title_id: Option<&str>) -> Option<String> {
+pub fn derive_base_title_id(kind: ContentKind, title_id: Option<&str>) -> Option<String> {
     let raw = title_id?;
     if raw.len() != 16 || !raw.chars().all(|ch| ch.is_ascii_hexdigit()) {
         return None;

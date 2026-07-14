@@ -1,6 +1,6 @@
 [package]
 name = "ownfoil-rs"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
 rust-version = "1.80"
 description = "Barebones CyberFoil-compatible Tinfoil game server in Rust"
@@ -13,7 +13,7 @@ categories = ["command-line-utilities", "network-programming"]
 [dependencies]
 anyhow = "1.0"
 aes = "0.8"
-axum = { version = "0.8", features = ["json", "macros"] }
+axum = { version = "0.8", features = ["json", "macros", "multipart"] }
 axum-extra = { version = "0.12", features = ["cookie", "form"] }
 bytes = "1.0"
 base64 = "0.22"
@@ -23,15 +23,19 @@ clap = { version = "4.5", features = ["derive"] }
 cookie = "0.18"
 dashmap = "6.0"
 mime_guess = "2.0"
+notify = "7.0"
+nx-archive = "0.1.2"
 percent-encoding = "2.3"
 regex = "1.11"
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+serde_yaml = "0.9"
 thiserror = "2.0"
 tokio = { version = "1.45", features = ["fs", "io-util", "macros", "rt-multi-thread", "signal", "sync", "time"] }
 tokio-util = { version = "0.7", features = ["io"] }
 futures-util = "0.3"
+hex = "0.4"
 toml = "0.8"
 tower_governor = { version = "0.8", features = ["axum"] }
 tower-http = { version = "0.6", features = ["trace", "request-id"] }
@@ -39,10 +43,11 @@ walkdir = "2.5"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 uuid = { version = "1.0", features = ["v4"] }
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls", "system-proxy"] }
 humantime = "2.1"
 rand = "0.8"
 rsa = { version = "0.9", features = ["pem", "sha2"] }
+scrypt = "0.11"
 sha2 = "0.10"
 zip = "2.2"
 tokio-stream = { version = "0.1", features = ["sync"] }

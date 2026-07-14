@@ -1,0 +1,25 @@
+services:
+  ownfoil:
+    build: .
+    image: ${OWNFOIL_IMAGE:-ownfoil-rs:latest}
+    restart: unless-stopped
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - USER_ADMIN_NAME
+      - USER_ADMIN_PASSWORD
+      - USER_GUEST_NAME
+      - USER_GUEST_PASSWORD
+      - OWNFOIL_INSECURE_ADMIN_COOKIE
+    ports:
+      - "${OWNFOIL_PORT:-8465}:8465"
+    volumes:
+      - ${CONFIG_PATH:-./config}:/app/config
+      - ${DATA_PATH:-./data}:/app/data
+      - ${GAMES_PATH:-./games}:/games:${GAMES_MOUNT_MODE:-rw}
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8465/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

@@ -1,0 +1,43 @@
+replicaCount: 1
+
+image:
+  repository: ghcr.io/d35p4c1t0/ownfoil-rs
+  tag: v0.3.0
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 8465
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: ownfoil.example.org
+  tls: []
+
+podSecurityContext:
+  fsGroup: 1000
+
+securityContext:
+  runAsUser: 1000
+  runAsGroup: 1000
+  runAsNonRoot: true
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+
+persistence:
+  config:
+    size: 1Gi
+    storageClass: ""
+  data:
+    size: 5Gi
+    storageClass: ""
+  games:
+    size: 100Gi
+    storageClass: ""
+    readOnly: false
+
+resources: {}
+
+env: []

@@ -2,8 +2,10 @@
 //! Fetches concurrently from all sources and merges results redundantly.
 
 use std::collections::HashMap;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use tokio::sync::{RwLock, broadcast};
 use tracing::{debug, error, info, warn};
@@ -48,14 +50,17 @@ pub struct TitleLanguageInfo {
 #[derive(Debug, Clone, Default)]
 struct TitleDbArtifacts {
     versions: HashMap<String, TitleVersionInfo>,
-    cnmts: HashMap<String, TitleCnmtInfo>,
+    cnmts: HashMap<String, Vec<TitleCnmtInfo>>,
     languages: HashMap<String, TitleLanguageInfo>,
+    regions: HashMap<String, Vec<String>>,
 }
 
 /// Lazy-loaded `TitleDB` cache. Loads from disk on first access, refreshes in background.
 #[derive(Debug, Clone)]
 pub struct TitleDb {
     inner: Arc<RwLock<TitleDbInner>>,
+    refreshing: Arc<AtomicBool>,
+    generation: Arc<AtomicU64>,
 }
 
 #[derive(Debug)]
@@ -89,6 +94,8 @@ impl TitleDb {
                 last_refresh: None,
                 progress_tx: None,
             })),
+            refreshing: Arc::new(AtomicBool::new(false)),
+            generation: Arc::new(AtomicU64::new(1)),
         }
     }
 
@@ -103,6 +110,8 @@ impl TitleDb {
                 last_refresh: None,
                 progress_tx: None,
             })),
+            refreshing: Arc::new(AtomicBool::new(false)),
+            generation: Arc::new(AtomicU64::new(1)),
         }
     }
 
@@ -122,15 +131,23 @@ impl TitleDb {
             data_dir = %data_dir.display(),
             "titledb initialized"
         );
+        let cache_dir = data_dir.join("titledb");
+        let cache_path =
+            cache_dir.join(format!("titles.{}.{}.json", config.region, config.language));
+        let map = load_cache(&cache_path).unwrap_or_default();
+        let artifacts = load_artifact_cache(&cache_dir).unwrap_or_default();
+        let initial_generation = u64::from(!map.is_empty() || !artifacts.is_empty());
         Self {
             inner: Arc::new(RwLock::new(TitleDbInner {
-                map: HashMap::new(),
-                artifacts: TitleDbArtifacts::default(),
+                map,
+                artifacts,
                 config,
                 data_dir,
                 last_refresh: None,
                 progress_tx,
             })),
+            refreshing: Arc::new(AtomicBool::new(false)),
+            generation: Arc::new(AtomicU64::new(initial_generation)),
         }
     }
 
@@ -162,7 +179,11 @@ impl TitleDb {
     pub async fn cnmt(&self, app_id: &str) -> Option<TitleCnmtInfo> {
         let normalized = normalize_title_id(app_id)?;
         let guard = self.inner.read().await;
-        guard.artifacts.cnmts.get(&normalized).cloned()
+        guard
+            .artifacts
+            .cnmts
+            .get(&normalized)
+            .and_then(|items| items.iter().max_by_key(|item| item.version.unwrap_or(0)).cloned())
     }
 
     /// Return language metadata for a title/application ID.
@@ -170,6 +191,20 @@ impl TitleDb {
         let normalized = normalize_title_id(title_id)?;
         let guard = self.inner.read().await;
         guard.artifacts.languages.get(&normalized).cloned()
+    }
+
+    pub async fn region_language_available(&self, region: &str, language: &str) -> Option<bool> {
+        let guard = self.inner.read().await;
+        if guard.artifacts.regions.is_empty() {
+            return None;
+        }
+        Some(
+            guard
+                .artifacts
+                .regions
+                .get(&region.to_ascii_uppercase())
+                .is_some_and(|languages| languages.iter().any(|known| known == language)),
+        )
     }
 
     /// Return known update CNMT entries for the given base title ID.
@@ -183,6 +218,7 @@ impl TitleDb {
                 .artifacts
                 .cnmts
                 .values()
+                .flatten()
                 .filter(|info| info.is_update_for(&normalized))
                 .cloned()
                 .collect()
@@ -202,6 +238,7 @@ impl TitleDb {
                 .artifacts
                 .cnmts
                 .values()
+                .flatten()
                 .filter(|info| info.is_dlc_for(&normalized))
                 .cloned()
                 .collect()
@@ -214,11 +251,25 @@ impl TitleDb {
     /// Fetch runs without holding the lock so lookups remain fast during refresh.
     pub fn refresh(&self) {
         debug!("titledb refresh triggered");
+        if self
+            .refreshing
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            debug!("titledb refresh skipped because another refresh is running");
+            return;
+        }
         let inner = Arc::clone(&self.inner);
+        let refreshing = Arc::clone(&self.refreshing);
+        let generation = Arc::clone(&self.generation);
         tokio::spawn(async move {
-            if let Err(e) = do_refresh_without_lock(&inner).await {
-                error!(error = %e, "titledb refresh failed");
+            match do_refresh_without_lock(&inner).await {
+                Ok(()) => {
+                    generation.fetch_add(1, Ordering::AcqRel);
+                }
+                Err(e) => error!(error = %e, "titledb refresh failed"),
             }
+            refreshing.store(false, Ordering::Release);
         });
     }
 
@@ -237,6 +288,10 @@ impl TitleDb {
     pub async fn entry_count(&self) -> usize {
         self.inner.read().await.map.len()
     }
+
+    pub fn generation(&self) -> u64 {
+        self.generation.load(Ordering::Acquire)
+    }
 }
 
 fn send_progress(tx: Option<&broadcast::Sender<String>>, msg: &str) {
@@ -247,6 +302,7 @@ fn send_progress(tx: Option<&broadcast::Sender<String>>, msg: &str) {
 
 /// Fetch and merge `TitleDB` data without holding the lock, then apply in a short write.
 #[allow(clippy::too_many_lines)]
+#[allow(clippy::cognitive_complexity)]
 async fn do_refresh_without_lock(inner: &RwLock<TitleDbInner>) -> Result<(), TitleDbError> {
     let (enabled, region, lang, url_override, data_dir, progress_tx) = {
         let guard = inner.read().await;
@@ -274,7 +330,7 @@ async fn do_refresh_without_lock(inner: &RwLock<TitleDbInner>) -> Result<(), Tit
         "titledb refresh starting"
     );
 
-    let cache_path = data_dir.join("titledb").join(format!("{region}.{lang}.json"));
+    let cache_path = data_dir.join("titledb").join(format!("titles.{region}.{lang}.json"));
 
     let parent = cache_path.parent().ok_or(TitleDbError::InvalidFormat)?;
     std::fs::create_dir_all(parent)?;
@@ -289,10 +345,8 @@ async fn do_refresh_without_lock(inner: &RwLock<TitleDbInner>) -> Result<(), Tit
         ),
     };
 
-    let mut sources: Vec<Source> = vec![blawar_raw];
-    if let Some(url) = url_override {
-        sources.push(Source::OwnfoilZip { url });
-    }
+    let sources: Vec<Source> =
+        url_override.map_or_else(|| vec![blawar_raw], |url| vec![Source::OwnfoilZip { url }]);
 
     let merged = fetch_and_merge(&sources, &region, &lang, progress_tx.as_ref()).await?;
 
@@ -455,10 +509,110 @@ async fn fetch_source(
 
 fn http_client() -> reqwest::Client {
     reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
+        .timeout(std::time::Duration::from_secs(180))
         .user_agent("ownfoil-rs/1.0 (TitleDB metadata fetcher)")
         .build()
         .unwrap_or_default()
+}
+
+const REMOTE_ZIP_BLOCK_SIZE: u64 = 8 * 1024 * 1024;
+
+struct RemoteZipReader {
+    client: reqwest::blocking::Client,
+    url: String,
+    len: u64,
+    position: u64,
+    cache_start: u64,
+    cache: Vec<u8>,
+}
+
+impl RemoteZipReader {
+    fn open(url: String) -> Result<Self, TitleDbError> {
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(180))
+            .user_agent("ownfoil-rs/1.0 (TitleDB ranged ZIP reader)")
+            .build()?;
+        let response = client
+            .get(&url)
+            .header(reqwest::header::RANGE, "bytes=0-0")
+            .send()?
+            .error_for_status()?;
+        if response.status() != reqwest::StatusCode::PARTIAL_CONTENT {
+            return Err(TitleDbError::RangeUnsupported);
+        }
+        let len = response
+            .headers()
+            .get(reqwest::header::CONTENT_RANGE)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.rsplit_once('/'))
+            .and_then(|(_, total)| total.parse().ok())
+            .ok_or(TitleDbError::InvalidFormat)?;
+
+        Ok(Self {
+            client,
+            url,
+            len,
+            position: 0,
+            cache_start: 0,
+            cache: response.bytes()?.to_vec(),
+        })
+    }
+
+    fn refill(&mut self) -> std::io::Result<()> {
+        let start = self.position;
+        let end = start.saturating_add(REMOTE_ZIP_BLOCK_SIZE - 1).min(self.len - 1);
+        let response = self
+            .client
+            .get(&self.url)
+            .header(reqwest::header::RANGE, format!("bytes={start}-{end}"))
+            .send()
+            .and_then(reqwest::blocking::Response::error_for_status)
+            .map_err(std::io::Error::other)?;
+        if response.status() != reqwest::StatusCode::PARTIAL_CONTENT {
+            return Err(std::io::Error::other("TitleDB server ignored byte range"));
+        }
+        self.cache = response.bytes().map_err(std::io::Error::other)?.to_vec();
+        self.cache_start = start;
+        Ok(())
+    }
+}
+
+impl Read for RemoteZipReader {
+    fn read(&mut self, output: &mut [u8]) -> std::io::Result<usize> {
+        if output.is_empty() || self.position >= self.len {
+            return Ok(0);
+        }
+        let cache_end = self.cache_start.saturating_add(self.cache.len() as u64);
+        if self.position < self.cache_start || self.position >= cache_end {
+            self.refill()?;
+        }
+        let offset =
+            usize::try_from(self.position - self.cache_start).map_err(std::io::Error::other)?;
+        let available = self.cache.len().saturating_sub(offset);
+        let remaining = usize::try_from(self.len - self.position).unwrap_or(usize::MAX);
+        let count = output.len().min(available).min(remaining);
+        output[..count].copy_from_slice(&self.cache[offset..offset + count]);
+        self.position += count as u64;
+        Ok(count)
+    }
+}
+
+impl Seek for RemoteZipReader {
+    fn seek(&mut self, position: SeekFrom) -> std::io::Result<u64> {
+        let position = match position {
+            SeekFrom::Start(position) => i128::from(position),
+            SeekFrom::End(offset) => i128::from(self.len) + i128::from(offset),
+            SeekFrom::Current(offset) => i128::from(self.position) + i128::from(offset),
+        };
+        if !(0..=i128::from(self.len)).contains(&position) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "seek outside remote ZIP",
+            ));
+        }
+        self.position = u64::try_from(position).map_err(std::io::Error::other)?;
+        Ok(self.position)
+    }
 }
 
 async fn fetch_ownfoil_zip(
@@ -466,22 +620,20 @@ async fn fetch_ownfoil_zip(
     region: &str,
     lang: &str,
 ) -> Result<Vec<(String, TitleInfo)>, TitleDbError> {
-    let client = http_client();
-    let resp = client.get(zip_url).send().await.map_err(|e| {
-        warn!(url = %zip_url, error = %e, "titledb ownfoil zip: connection failed");
-        TitleDbError::Http(e)
-    })?;
-    let resp = resp.error_for_status().map_err(|e| {
-        warn!(
-            url = %zip_url,
-            status = e.status().map_or(0, |status| status.as_u16()),
-            "titledb ownfoil zip: HTTP error"
-        );
-        TitleDbError::Http(e)
-    })?;
-    let bytes = resp.bytes().await?;
-    let cursor = std::io::Cursor::new(bytes);
-    let mut archive = zip::ZipArchive::new(cursor)?;
+    let zip_url = zip_url.to_string();
+    let region = region.to_string();
+    let lang = lang.to_string();
+    tokio::task::spawn_blocking(move || fetch_ownfoil_zip_blocking(&zip_url, &region, &lang))
+        .await
+        .map_err(|_| TitleDbError::BackgroundTask)?
+}
+
+fn fetch_ownfoil_zip_blocking(
+    zip_url: &str,
+    region: &str,
+    lang: &str,
+) -> Result<Vec<(String, TitleInfo)>, TitleDbError> {
+    let mut archive = zip::ZipArchive::new(RemoteZipReader::open(zip_url.to_string())?)?;
 
     let titles_name = format!("titles.{region}.{lang}.json");
     let alt_name = format!("{region}.{lang}.json");
@@ -583,11 +735,14 @@ async fn fetch_optional_text(
 }
 
 async fn fetch_ownfoil_zip_artifacts(zip_url: &str) -> Result<TitleDbArtifacts, TitleDbError> {
-    let client = http_client();
-    let resp = client.get(zip_url).send().await?.error_for_status()?;
-    let bytes = resp.bytes().await?;
-    let cursor = std::io::Cursor::new(bytes);
-    let mut archive = zip::ZipArchive::new(cursor)?;
+    let zip_url = zip_url.to_string();
+    tokio::task::spawn_blocking(move || fetch_ownfoil_zip_artifacts_blocking(zip_url))
+        .await
+        .map_err(|_| TitleDbError::BackgroundTask)?
+}
+
+fn fetch_ownfoil_zip_artifacts_blocking(zip_url: String) -> Result<TitleDbArtifacts, TitleDbError> {
+    let mut archive = zip::ZipArchive::new(RemoteZipReader::open(zip_url)?)?;
 
     let versions_json = read_zip_text_optional(&mut archive, "versions.json")?;
     let versions_txt = read_zip_text_optional(&mut archive, "versions.txt")?;
@@ -638,8 +793,9 @@ fn parse_artifact_buffers(
 
     let cnmts = cnmts_json.map(parse_cnmts_json).transpose()?.unwrap_or_default();
     let languages = languages_json.map(parse_languages_json).transpose()?.unwrap_or_default();
+    let regions = languages_json.map(parse_regions_json).transpose()?.unwrap_or_default();
 
-    Ok(TitleDbArtifacts { versions, cnmts, languages })
+    Ok(TitleDbArtifacts { versions, cnmts, languages, regions })
 }
 
 fn parse_titles_json(buf: &str) -> Result<Vec<(String, TitleInfo)>, TitleDbError> {
@@ -765,7 +921,7 @@ fn parse_version_value(title_id: &str, value: &serde_json::Value) -> TitleVersio
     TitleVersionInfo::from_versions(title_id.to_string(), versions)
 }
 
-fn parse_cnmts_json(buf: &str) -> Result<HashMap<String, TitleCnmtInfo>, TitleDbError> {
+fn parse_cnmts_json(buf: &str) -> Result<HashMap<String, Vec<TitleCnmtInfo>>, TitleDbError> {
     let raw: serde_json::Value = serde_json::from_str(buf)?;
     let values: Vec<(Option<String>, serde_json::Value)> = match raw {
         serde_json::Value::Object(map) => map.into_iter().map(|(k, v)| (Some(k), v)).collect(),
@@ -780,35 +936,72 @@ fn parse_cnmts_json(buf: &str) -> Result<HashMap<String, TitleCnmtInfo>, TitleDb
         else {
             continue;
         };
-        let Some(obj) = value.as_object() else {
+        let Some(outer) = value.as_object() else {
             continue;
         };
-        let title_type = string_field(obj, &["type", "titleType", "title_type", "contentType"]);
-        let base_title_id = string_field(
-            obj,
-            &[
-                "baseId",
-                "base_id",
-                "baseTitleId",
-                "base_title_id",
-                "applicationId",
-                "application_id",
-            ],
-        )
-        .and_then(|id| normalize_title_id(&id));
-        let version = u64_field(obj, &["version", "titleVersion", "title_version"]);
-        let required_system_version = u64_field(
-            obj,
-            &["requiredSystemVersion", "required_system_version", "requiredDownloadSystemVersion"],
-        );
-
-        out.insert(
-            title_id.clone(),
-            TitleCnmtInfo { title_id, title_type, base_title_id, version, required_system_version },
-        );
+        let direct = outer
+            .keys()
+            .any(|key| matches!(key.as_str(), "type" | "titleType" | "title_type" | "contentType"));
+        let mut entries = Vec::new();
+        if direct {
+            entries.push(cnmt_info(&title_id, None, outer));
+        } else {
+            for (version, metadata) in outer {
+                if let Some(metadata) = metadata.as_object() {
+                    entries.push(cnmt_info(&title_id, parse_u64_value(version), metadata));
+                }
+            }
+        }
+        entries.sort_by_key(|info| info.version.unwrap_or(0));
+        if !entries.is_empty() {
+            out.insert(title_id, entries);
+        }
     }
 
     Ok(out)
+}
+
+fn cnmt_info(
+    title_id: &str,
+    version_from_key: Option<u64>,
+    obj: &serde_json::Map<String, serde_json::Value>,
+) -> TitleCnmtInfo {
+    let title_type = obj
+        .get("titleType")
+        .and_then(value_u64)
+        .map(|kind| match kind {
+            128 => "BASE".to_string(),
+            129 => "UPDATE".to_string(),
+            130 => "DLC".to_string(),
+            other => other.to_string(),
+        })
+        .or_else(|| string_field(obj, &["type", "titleType", "title_type", "contentType"]));
+    let base_title_id = string_field(
+        obj,
+        &[
+            "otherApplicationId",
+            "baseId",
+            "base_id",
+            "baseTitleId",
+            "base_title_id",
+            "applicationId",
+            "application_id",
+        ],
+    )
+    .and_then(|id| normalize_title_id(&id));
+    let version =
+        version_from_key.or_else(|| u64_field(obj, &["version", "titleVersion", "title_version"]));
+    let required_system_version = u64_field(
+        obj,
+        &["requiredSystemVersion", "required_system_version", "requiredDownloadSystemVersion"],
+    );
+    TitleCnmtInfo {
+        title_id: title_id.to_string(),
+        title_type,
+        base_title_id,
+        version,
+        required_system_version,
+    }
 }
 
 fn parse_languages_json(buf: &str) -> Result<HashMap<String, TitleLanguageInfo>, TitleDbError> {
@@ -836,6 +1029,22 @@ fn parse_languages_json(buf: &str) -> Result<HashMap<String, TitleLanguageInfo>,
     Ok(out)
 }
 
+fn parse_regions_json(buf: &str) -> Result<HashMap<String, Vec<String>>, TitleDbError> {
+    let raw: serde_json::Value = serde_json::from_str(buf)?;
+    let object = raw.as_object().ok_or(TitleDbError::InvalidFormat)?;
+    let mut regions = HashMap::new();
+    for (region, value) in object {
+        if region.len() == 16 || region.len() > 4 {
+            continue;
+        }
+        let languages = language_values(value);
+        if !languages.is_empty() {
+            regions.insert(region.to_ascii_uppercase(), languages);
+        }
+    }
+    Ok(regions)
+}
+
 impl TitleInfo {
     fn merge(&mut self, other: &Self) {
         if self.icon_url.is_none() && other.icon_url.is_some() {
@@ -852,7 +1061,10 @@ impl TitleInfo {
 
 impl TitleDbArtifacts {
     fn is_empty(&self) -> bool {
-        self.versions.is_empty() && self.cnmts.is_empty() && self.languages.is_empty()
+        self.versions.is_empty()
+            && self.cnmts.is_empty()
+            && self.languages.is_empty()
+            && self.regions.is_empty()
     }
 }
 
@@ -969,7 +1181,11 @@ fn language_values(value: &serde_json::Value) -> Vec<String> {
 
 fn load_cache(path: &std::path::Path) -> Result<HashMap<String, TitleInfo>, TitleDbError> {
     let buf = std::fs::read_to_string(path)?;
-    let raw: Vec<serde_json::Value> = serde_json::from_str(&buf)?;
+    let raw: serde_json::Value = serde_json::from_str(&buf)?;
+    if raw.is_object() {
+        return Ok(parse_titles_json(&buf)?.into_iter().collect());
+    }
+    let raw = raw.as_array().ok_or(TitleDbError::InvalidFormat)?;
     let mut map = HashMap::new();
     for v in raw {
         let obj = v.as_object().ok_or(TitleDbError::InvalidFormat)?;
@@ -987,19 +1203,22 @@ fn save_cache(
     path: &std::path::Path,
     map: &HashMap<String, TitleInfo>,
 ) -> Result<(), TitleDbError> {
-    let arr: Vec<serde_json::Value> = map
+    let object: serde_json::Map<String, serde_json::Value> = map
         .iter()
         .map(|(id, info)| {
-            serde_json::json!({
-                "id": id,
-                "icon_url": info.icon_url,
-                "banner_url": info.banner_url,
-                "name": info.name,
-            })
+            (
+                id.clone(),
+                serde_json::json!({
+                    "id": id,
+                    "iconUrl": info.icon_url,
+                    "bannerUrl": info.banner_url,
+                    "name": info.name,
+                    "category": "",
+                }),
+            )
         })
         .collect();
-    let buf = serde_json::to_string_pretty(&arr)?;
-    std::fs::write(path, buf)?;
+    atomic_write(path, serde_json::to_string_pretty(&object)?.as_bytes())?;
     Ok(())
 }
 
@@ -1008,6 +1227,7 @@ fn load_artifact_cache(cache_dir: &std::path::Path) -> Result<TitleDbArtifacts, 
     let versions_txt = load_optional_artifact_txt(cache_dir, "versions.txt");
     let cnmts = load_optional_artifact(cache_dir, "cnmts.json", parse_cnmts_json)?;
     let languages = load_optional_artifact(cache_dir, "languages.json", parse_languages_json)?;
+    let regions = load_optional_artifact(cache_dir, "languages.json", parse_regions_json)?;
 
     let mut versions = versions.unwrap_or_default();
     for (id, info) in versions_txt {
@@ -1018,6 +1238,7 @@ fn load_artifact_cache(cache_dir: &std::path::Path) -> Result<TitleDbArtifacts, 
         versions,
         cnmts: cnmts.unwrap_or_default(),
         languages: languages.unwrap_or_default(),
+        regions: regions.unwrap_or_default(),
     })
 }
 
@@ -1060,27 +1281,44 @@ fn save_artifact_cache(
             })
         }),
     )?;
-    write_json_artifact(
-        &cache_dir.join("cnmts.json"),
-        artifacts.cnmts.values().map(|info| {
-            serde_json::json!({
-                "id": info.title_id,
-                "type": info.title_type,
-                "base_id": info.base_title_id,
-                "version": info.version,
-                "required_system_version": info.required_system_version,
-            })
-        }),
-    )?;
-    write_json_artifact(
-        &cache_dir.join("languages.json"),
-        artifacts.languages.values().map(|info| {
-            serde_json::json!({
-                "id": info.title_id,
-                "languages": info.languages,
-            })
-        }),
-    )?;
+    let mut cnmts = serde_json::Map::new();
+    for (app_id, versions) in &artifacts.cnmts {
+        let mut version_map = serde_json::Map::new();
+        for info in versions {
+            let title_type = info.title_type.as_deref().map(|kind| match kind {
+                "BASE" => 128,
+                "UPDATE" => 129,
+                "DLC" => 130,
+                _ => 0,
+            });
+            version_map.insert(
+                info.version.unwrap_or(0).to_string(),
+                serde_json::json!({
+                    "titleType": title_type,
+                    "otherApplicationId": info.base_title_id,
+                    "requiredSystemVersion": info.required_system_version,
+                }),
+            );
+        }
+        cnmts.insert(app_id.to_ascii_lowercase(), serde_json::Value::Object(version_map));
+    }
+    atomic_write(&cache_dir.join("cnmts.json"), serde_json::to_string_pretty(&cnmts)?.as_bytes())?;
+    if artifacts.regions.is_empty() {
+        write_json_artifact(
+            &cache_dir.join("languages.json"),
+            artifacts.languages.values().map(|info| {
+                serde_json::json!({
+                    "id": info.title_id,
+                    "languages": info.languages,
+                })
+            }),
+        )?;
+    } else {
+        atomic_write(
+            &cache_dir.join("languages.json"),
+            serde_json::to_string_pretty(&artifacts.regions)?.as_bytes(),
+        )?;
+    }
     Ok(())
 }
 
@@ -1095,8 +1333,14 @@ fn write_json_artifact(
         a.cmp(b)
     });
     let buf = serde_json::to_string_pretty(&values)?;
-    std::fs::write(path, buf)?;
+    atomic_write(path, buf.as_bytes())?;
     Ok(())
+}
+
+fn atomic_write(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    let temp = path.with_extension("json.tmp");
+    std::fs::write(&temp, bytes)?;
+    std::fs::rename(temp, path)
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -1111,6 +1355,10 @@ pub enum TitleDbError {
     Utf8(#[from] std::string::FromUtf8Error),
     #[error("ZIP error: {0}")]
     Zip(#[from] zip::result::ZipError),
+    #[error("remote ZIP server does not support byte ranges")]
+    RangeUnsupported,
+    #[error("TitleDB background task failed")]
+    BackgroundTask,
     #[error("invalid format")]
     InvalidFormat,
 }
@@ -1165,12 +1413,13 @@ mod tests {
         }"#;
 
         let cnmts = parse_cnmts_json(cnmts).expect("cnmts parse");
-        let update = cnmts.get("0100000000010800").expect("update cnmt");
+        let update =
+            cnmts.get("0100000000010800").and_then(|items| items.first()).expect("update cnmt");
         assert!(update.is_update_for("0100000000010000"));
         assert_eq!(update.version, Some(65_536));
         assert_eq!(update.required_system_version, Some(256));
 
-        let dlc = cnmts.get("0100000000011001").expect("dlc cnmt");
+        let dlc = cnmts.get("0100000000011001").and_then(|items| items.first()).expect("dlc cnmt");
         assert!(dlc.is_dlc_for("0100000000010000"));
 
         let languages = parse_languages_json(languages).expect("languages parse");
@@ -1178,6 +1427,22 @@ mod tests {
             languages.get("0100000000010000").expect("language entry").languages,
             vec!["en".to_string(), "ja".to_string()]
         );
+    }
+
+    #[test]
+    fn parses_upstream_nested_cnmt_versions_and_regions() {
+        let cnmts = parse_cnmts_json(
+            r#"{"0100000000010800":{"0":{"titleType":129,"otherApplicationId":"0100000000010000"},"65536":{"titleType":129,"otherApplicationId":"0100000000010000"}}}"#,
+        )
+        .expect("nested CNMT parses");
+        let updates = cnmts.get("0100000000010800").expect("app exists");
+        assert_eq!(updates.len(), 2);
+        assert_eq!(updates[1].version, Some(65_536));
+        assert!(updates[1].is_update_for("0100000000010000"));
+
+        let regions = parse_regions_json(r#"{"US":["en","fr"],"GB":["en"]}"#)
+            .expect("region languages parse");
+        assert_eq!(regions.get("US"), Some(&vec!["en".to_string(), "fr".to_string()]));
     }
 
     #[tokio::test]

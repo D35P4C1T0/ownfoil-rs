@@ -11,7 +11,7 @@ use regex::Regex;
 use serde::Serialize;
 
 /// Content type derived from title ID suffix.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ContentKind {
     Base,
@@ -20,16 +20,46 @@ pub enum ContentKind {
     Unknown,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct IdentifiedContent {
+    pub title_id: String,
+    pub app_id: String,
+    pub version: u32,
+    pub kind: ContentKind,
+}
+
 /// A single content file (NSP, XCI, etc.) with parsed metadata.
 /// A single content file (NSP, XCI, etc.) with parsed metadata.
 #[derive(Debug, Clone, Serialize)]
 pub struct ContentFile {
+    /// Durable database identifier. Zero means not persisted yet.
+    pub id: usize,
+    /// Root containing this file. Omitted from API serialization.
+    #[serde(skip)]
+    pub library_root: PathBuf,
     pub relative_path: PathBuf,
     pub name: String,
     pub size: u64,
     pub title_id: Option<String>,
     pub version: Option<u32>,
     pub kind: ContentKind,
+    /// Every CNMT found in a multi-content container. Empty means filename fallback.
+    #[serde(skip)]
+    pub identified_contents: Vec<IdentifiedContent>,
+}
+
+impl ContentFile {
+    pub fn is_multicontent(&self) -> bool {
+        self.identified_contents.len() > 1
+    }
+
+    pub fn contains_kind(&self, kind: ContentKind) -> bool {
+        if self.identified_contents.is_empty() {
+            self.kind == kind
+        } else {
+            self.identified_contents.iter().any(|content| content.kind == kind)
+        }
+    }
 }
 
 /// All file versions for a given base title ID.
@@ -209,20 +239,26 @@ mod tests {
     fn catalog_groups_versions_by_title() {
         let files = vec![
             ContentFile {
+                id: 0,
+                library_root: PathBuf::new(),
                 relative_path: PathBuf::from("a/base.nsp"),
                 name: String::from("base.nsp"),
                 size: 1,
                 title_id: Some(String::from("0100ABCD12340000")),
                 version: Some(0),
                 kind: ContentKind::Base,
+                identified_contents: Vec::new(),
             },
             ContentFile {
+                id: 0,
+                library_root: PathBuf::new(),
                 relative_path: PathBuf::from("a/update.nsp"),
                 name: String::from("update.nsp"),
                 size: 1,
                 title_id: Some(String::from("0100ABCD12340000")),
                 version: Some(65536),
                 kind: ContentKind::Update,
+                identified_contents: Vec::new(),
             },
         ];
 
