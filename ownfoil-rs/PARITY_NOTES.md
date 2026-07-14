@@ -1,45 +1,33 @@
-# PARITY_NOTES
+# Parity notes
 
-## Implemented
+Target: `a1ex4/ownfoil@7ca28d53f634c6d9cf30786590c966483e819c7b`.
 
-- Core library scanner for `.nsp/.xci/.nsz/.xcz` files
-- Catalog/index endpoint returning title metadata and download URLs
-- Section browsing with Ownfoil/CyberFoil-style groups (`new/recommended/updates/dlc/all`) and aliases
-- Tinfoil-style root payload (`/`) with `files: [{url,size}]`
-- Ownfoil-style game stream endpoint (`/api/get_game/:id`)
-- CyberFoil-compatible media endpoints (`/api/shop/icon/:title_id`, `/api/shop/banner/:title_id`)
-- Search endpoint over filename and title id
-- Title version listing by `title_id`
-- File download endpoint with byte range support (`Range`, `Content-Range`, `Accept-Ranges`)
-- Minimal save-sync list endpoint (`/api/saves/list`) returning empty list when no backups are available
-- Optional HTTP Basic auth via:
-  - `Authorization: Basic <base64(username:password)>`
-- Config-based auth via separate credentials file (`auth_file` with `username`/`password` and optional `[[users]]`)
-- Private-by-default startup policy (auth file required unless `OWNFOIL_PUBLIC=true`)
-- Public mode disables admin/settings routes
-- Admin session cookie is `Secure` by default (override via `OWNFOIL_INSECURE_ADMIN_COOKIE=true`)
-- Endpoint aliases for compatibility (`/shop`, `/index`, `/titles`, and `/api/*` variants)
-- Shop sections now mirror Ownfoil/CyberFoil behavior by deduplicating updates and DLC to latest version per content id
+Intentional security differences:
 
-## Intentionally Removed
+- Mutable browser/admin requests require a same-origin `Origin` or `Referer` when
+  supplied; redirects are restricted to safe local paths.
+- Settings APIs redact Tinfoil's private certificate key as well as all stored
+  `hauth` values.
+- Organizer and library operations enforce canonical root containment. Destructive
+  moves use a recovery journal, and cross-filesystem moves are verified before the
+  source is removed.
+- Authentication is throttled and cookies are HttpOnly, SameSite, and Secure unless
+  the explicit native-development override is enabled.
 
-- Web UI/templates/static assets
-- NSZ conversion/compression/decompression workflows
-- Non-essential administrative endpoints and background jobs unrelated to core game-serving
+Resilience differences:
 
-## Known Deviations
+- A container that cannot be decrypted or parsed remains usable through Ownfoil's
+  filename convention instead of aborting the scan.
+- Watcher events trigger database reconciliation, so duplicate/coalesced events and
+  organizer-generated moves converge safely.
 
-- Metadata extraction is filename-based heuristics only (no NCA/NSP deep metadata parsing).
-- Range handling supports single ranges; multi-range requests are rejected.
-- JSON response schema is compatibility-oriented, not a full reimplementation of every Python route shape.
+Rust-only extensions retained without shadowing upstream routes:
 
-## Compatibility Harness
+- health, catalog, search, section, and title-version APIs
+- TitleDB progress SSE and connectivity probe
+- organizer dry-run preview
+- legacy Rust route aliases and optional TOML credential import
 
-- `tests/compat_route_matrix.rs` tracks the upstream Ownfoil route surface from `ROADMAP.md`.
-- Passing tests document the current route/response shapes for Tinfoil root payloads, CyberFoil sections, `/api/titles` as the current catalog alias, and the empty save-sync stub.
-- Ignored tests intentionally name non-blocking parity gaps:
-  - browser pages: `/settings`, `/setup`, `/profile`, `/login`, `/logout`
-  - settings APIs: `/api/settings`, `/api/settings/titles`, `/api/settings/shop`, library path/management routes, scheduler route
-  - user/upload/scan APIs: `/api/users`, `/api/user`, `/api/user/signup`, `/api/upload`, `/api/library/scan`
-  - upstream `/api/titles` `{ total, games }` response shape
-  - persistent state for libraries, files, titles, apps, users, download counts, and identification status
+Pinned upstream placeholders remain placeholders: `/profile` exposes no save-sync
+workflow, and `compress_files` performs no NSP/XCI conversion. Existing NSZ/XCZ
+content is supported.

@@ -77,12 +77,15 @@ fn scan_library_sync(root: &Path) -> Result<Vec<ContentFile>, ScanError> {
         let kind = classify_title_id(title_id.as_deref());
 
         out.push(ContentFile {
+            id: 0,
+            library_root: root.to_path_buf(),
             relative_path,
             name,
             size: metadata.len(),
             title_id,
             version: parsed_name.version.or(parsed_path.version),
             kind,
+            identified_contents: Vec::new(),
         });
     }
 

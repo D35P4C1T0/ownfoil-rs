@@ -10,6 +10,7 @@ use clap::Parser;
 use serde::Deserialize;
 use thiserror::Error;
 
+use crate::settings::{Settings, SettingsError};
 use crate::shop::{ShopConfig, validate_public_key_pem};
 
 #[derive(Debug, Parser)]
@@ -34,6 +35,10 @@ pub struct Cli {
 
     #[arg(long, short = 'c', value_name = "FILE")]
     pub config: Option<PathBuf>,
+
+    /// Ownfoil-compatible mutable YAML settings file.
+    #[arg(long, value_name = "FILE")]
+    pub settings: Option<PathBuf>,
 }
 
 /// Resolved application configuration after merging CLI, file, and env.
@@ -41,11 +46,17 @@ pub struct Cli {
 pub struct AppConfig {
     pub bind: SocketAddr,
     pub library_root: PathBuf,
+    pub library_roots: Vec<PathBuf>,
     pub auth_file: Option<PathBuf>,
     pub public_shop: bool,
     pub insecure_admin_cookie: bool,
     pub scan_interval_seconds: u64,
     pub data_dir: PathBuf,
+    pub config_dir: PathBuf,
+    pub settings_path: PathBuf,
+    pub db_path: PathBuf,
+    pub keys_path: PathBuf,
+    pub settings: Settings,
     pub titledb: TitleDbConfig,
     pub shop: ShopConfig,
 }
@@ -73,7 +84,10 @@ impl Default for TitleDbConfig {
             region: "US".to_string(),
             language: "en".to_string(),
             refresh_interval: "24h".to_string(),
-            url_override: None,
+            url_override: Some(
+                "https://nightly.link/a1ex4/ownfoil/workflows/region_titles/master/titledb.zip"
+                    .to_string(),
+            ),
         }
     }
 }
@@ -90,10 +104,10 @@ pub enum ConfigError {
     LibraryRootInvalid { path: String },
     #[error("auth file {path} does not exist")]
     AuthFileNotFound { path: String },
-    #[error("private shop requires --auth-file or auth_file in config")]
-    AuthFileRequired,
     #[error("invalid shop public key")]
     InvalidShopPublicKey,
+    #[error(transparent)]
+    OwnfoilSettings(#[from] SettingsError),
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -114,28 +128,49 @@ impl AppConfig {
         let config_path = cli.config.as_deref();
         let from_file = read_file_config(config_path)?;
         let from_runtime = read_runtime_config(config_path)?;
+        let settings_path = resolve_settings_path(cli.settings);
+        let settings_exists = settings_path.exists();
+        let mut settings = Settings::load(&settings_path)?;
         let env_public_shop = read_public_shop_env()?;
         let env_insecure_admin_cookie = read_insecure_admin_cookie_env()?;
 
         let bind =
             cli.bind.or(from_file.bind).unwrap_or_else(|| SocketAddr::from(([0, 0, 0, 0], 8465)));
-        let library_root = cli
-            .library_root
-            .or(from_file.library_root)
-            .unwrap_or_else(|| PathBuf::from("./library"));
+        let explicit_library = cli.library_root.or(from_file.library_root);
+        if !settings_exists && explicit_library.is_none() && !Path::new("/games").is_dir() {
+            settings.library.paths = vec![PathBuf::from("./library")];
+        }
+        let library_roots =
+            explicit_library.map_or_else(|| settings.library.paths.clone(), |path| vec![path]);
+        settings.library.paths.clone_from(&library_roots);
+        let library_root =
+            library_roots.first().cloned().unwrap_or_else(|| PathBuf::from("./library"));
         let auth_file = cli.auth_file.or(from_file.auth_file);
-        let public_shop = env_public_shop.or(from_file.public_shop).unwrap_or(false);
+        let public_shop = env_public_shop.or(from_file.public_shop).unwrap_or(settings.shop.public);
+        settings.shop.public = public_shop;
         let insecure_admin_cookie =
             env_insecure_admin_cookie.or(from_file.insecure_admin_cookie).unwrap_or(false);
         let scan_interval_seconds =
             cli.scan_interval_seconds.or(from_file.scan_interval_seconds).unwrap_or(30).max(1);
 
-        let data_dir = config_path
-            .and_then(|p| p.parent())
-            .map_or_else(|| PathBuf::from("./data"), |p| p.join("data"));
+        let config_dir =
+            settings_path.parent().map_or_else(|| PathBuf::from("./config"), Path::to_path_buf);
+        let data_dir = if config_dir == Path::new("/app/config") {
+            PathBuf::from("/app/data")
+        } else {
+            config_path
+                .and_then(|p| p.parent())
+                .map_or_else(|| PathBuf::from("./data"), |p| p.join("data"))
+        };
 
-        let titledb = from_runtime.titledb.or(from_file.titledb).unwrap_or_default();
-        let mut shop = from_runtime.shop.or(from_file.shop).unwrap_or_default();
+        let mut titledb = from_runtime.titledb.or(from_file.titledb).unwrap_or_default();
+        titledb.region.clone_from(&settings.titles.region);
+        titledb.language.clone_from(&settings.titles.language);
+        let mut shop = from_runtime.shop.or(from_file.shop).unwrap_or_else(|| ShopConfig {
+            motd: settings.shop.motd.clone(),
+            encrypt: settings.shop.clients.tinfoil.encrypt,
+            ..ShopConfig::default()
+        });
         if let Some(value) = read_shop_encrypt_env()? {
             shop.encrypt = value;
         }
@@ -152,11 +187,17 @@ impl AppConfig {
         let config = Self {
             bind,
             library_root,
+            library_roots,
             auth_file,
             public_shop,
             insecure_admin_cookie,
             scan_interval_seconds,
+            db_path: data_dir.join("ownfoil.db"),
             data_dir,
+            keys_path: config_dir.join("keys.txt"),
+            config_dir,
+            settings_path,
+            settings,
             titledb,
             shop,
         };
@@ -167,17 +208,17 @@ impl AppConfig {
 }
 
 fn validate_config(config: &AppConfig) -> Result<(), ConfigError> {
-    if !config.library_root.exists() || !config.library_root.is_dir() {
-        return Err(ConfigError::LibraryRootInvalid {
-            path: config.library_root.display().to_string(),
-        });
-    }
-
-    if !config.public_shop {
-        let auth_path = config.auth_file.as_ref().ok_or(ConfigError::AuthFileRequired)?;
-        if !auth_path.exists() {
-            return Err(ConfigError::AuthFileNotFound { path: auth_path.display().to_string() });
+    for library_root in &config.library_roots {
+        if !library_root.exists() || !library_root.is_dir() {
+            return Err(ConfigError::LibraryRootInvalid {
+                path: library_root.display().to_string(),
+            });
         }
+    }
+    if config.auth_file.as_ref().is_some_and(|path| !path.exists()) {
+        let path =
+            config.auth_file.as_ref().map_or_else(String::new, |path| path.display().to_string());
+        return Err(ConfigError::AuthFileNotFound { path });
     }
 
     if !config.shop.public_key.trim().is_empty()
@@ -187,6 +228,18 @@ fn validate_config(config: &AppConfig) -> Result<(), ConfigError> {
     }
 
     Ok(())
+}
+
+fn resolve_settings_path(cli_path: Option<PathBuf>) -> PathBuf {
+    cli_path.or_else(|| std::env::var_os("OWNFOIL_SETTINGS").map(PathBuf::from)).unwrap_or_else(
+        || {
+            if Path::new("/app/config").is_dir() {
+                PathBuf::from("/app/config/settings.yaml")
+            } else {
+                PathBuf::from("./config/settings.yaml")
+            }
+        },
+    )
 }
 
 fn read_file_config(path: Option<&Path>) -> Result<FileConfig, ConfigError> {

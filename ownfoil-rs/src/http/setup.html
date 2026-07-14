@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Ownfoil Setup</title>
+  <style>
+    body{font:16px system-ui;max-width:900px;margin:2rem auto;padding:0 1rem;background:#111827;color:#f9fafb}
+    nav a,a{color:#93c5fd} section{background:#1f2937;padding:1rem 1.5rem;margin:1rem 0;border-radius:.6rem}
+    code{background:#0f172a;padding:.15rem .35rem;border-radius:.25rem}.disabled{opacity:.55}
+  </style>
+</head>
+<body>
+<nav><a href="/">Library</a> · <a href="/settings">Settings</a> · <a href="/logout">Logout</a></nav>
+<h1>Client setup</h1>
+<p>Use this server address in supported clients. Add <code>/base</code>, <code>/update</code>,
+<code>/dlc</code>, or <code>/multi</code> to filter content.</p>
+<div id="clients"></div>
+<script>
+fetch('/api/setup').then(r=>r.json()).then(settings=>{
+  const root=document.querySelector('#clients');
+  const address=settings.host?`https://${settings.host}`:location.origin;
+  for(const [name,enabled] of Object.entries(settings.clients)){
+    const section=document.createElement('section');
+    if(!enabled)section.className='disabled';
+    section.innerHTML=`<h2>${name}</h2><p>${enabled?'Enabled':'Disabled'}</p><p>URL: <code>${address}</code></p>`;
+    root.append(section);
+  }
+});
+</script>
+</body>
+</html>

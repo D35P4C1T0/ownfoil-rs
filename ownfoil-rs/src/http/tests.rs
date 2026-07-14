@@ -61,7 +61,7 @@ mod tests {
         insecure_admin_cookie: bool,
         shop: ShopConfig,
     ) -> AppState {
-        let data_dir = std::env::temp_dir().join("ownfoil-test");
+        let data_dir = std::env::temp_dir().join(format!("ownfoil-test-{}", uuid::Uuid::new_v4()));
         let (progress_tx, _) = tokio::sync::broadcast::channel(1);
         let titledb = TitleDb::with_progress(
             TitleDbConfig { enabled: false, ..Default::default() },
@@ -71,11 +71,17 @@ mod tests {
         AppState {
             catalog: Arc::new(RwLock::new(catalog)),
             library_root,
+            storage: None,
+            scan_lock: Arc::new(tokio::sync::Mutex::new(())),
+            settings: Arc::new(RwLock::new(crate::settings::Settings::default())),
+            settings_path: data_dir.join("settings.yaml"),
+            keys_path: data_dir.join("keys.txt"),
             auth: Arc::new(auth),
-            shop: Arc::new(shop),
+            shop: Arc::new(RwLock::new(shop)),
             insecure_admin_cookie,
             sessions,
             titledb,
+            titles_cache: Arc::new(RwLock::new(None)),
             data_dir,
             titledb_progress_tx: progress_tx,
         }
@@ -88,16 +94,22 @@ mod tests {
         sessions: SessionStore,
         titledb: TitleDb,
     ) -> AppState {
-        let data_dir = std::env::temp_dir().join("ownfoil-test");
+        let data_dir = std::env::temp_dir().join(format!("ownfoil-test-{}", uuid::Uuid::new_v4()));
         let (progress_tx, _) = tokio::sync::broadcast::channel(1);
         AppState {
             catalog: Arc::new(RwLock::new(catalog)),
             library_root,
+            storage: None,
+            scan_lock: Arc::new(tokio::sync::Mutex::new(())),
+            settings: Arc::new(RwLock::new(crate::settings::Settings::default())),
+            settings_path: data_dir.join("settings.yaml"),
+            keys_path: data_dir.join("keys.txt"),
             auth: Arc::new(auth),
-            shop: Arc::new(ShopConfig::default()),
+            shop: Arc::new(RwLock::new(ShopConfig::default())),
             insecure_admin_cookie: false,
             sessions,
             titledb,
+            titles_cache: Arc::new(RwLock::new(None)),
             data_dir,
             titledb_progress_tx: progress_tx,
         }
@@ -106,12 +118,15 @@ mod tests {
     #[tokio::test]
     async fn health_returns_ok_with_catalog_count() -> Result<()> {
         let catalog = Catalog::from_files(vec![ContentFile {
+            id: 0,
+            library_root: PathBuf::new(),
             relative_path: PathBuf::from("a.nsp"),
             name: String::from("a.nsp"),
             size: 1,
             title_id: None,
             version: None,
             kind: ContentKind::Unknown,
+            identified_contents: Vec::new(),
         }]);
         let state = test_app_state(
             catalog,
@@ -158,12 +173,15 @@ mod tests {
         fs::write(&file_path, b"0123456789").await?;
 
         let catalog = Catalog::from_files(vec![ContentFile {
+            id: 0,
+            library_root: PathBuf::new(),
             relative_path: PathBuf::from("demo.nsp"),
             name: String::from("demo.nsp"),
             size: 10,
             title_id: Some(String::from("0100000000000000")),
             version: Some(0),
             kind: ContentKind::Base,
+            identified_contents: Vec::new(),
         }]);
 
         let state = test_app_state(
@@ -234,21 +252,20 @@ mod tests {
             server.get("/api/settings").add_header("Authorization", "Basic YWRtaW46c2VjcmV0").await;
         assert_eq!(settings.status_code(), StatusCode::OK);
         let body: Value = settings.json();
-        assert_eq!(body.get("success"), Some(&Value::Bool(true)));
-        assert_eq!(body.get("library_paths").and_then(Value::as_array).map(Vec::len), Some(1));
+        assert_eq!(body.pointer("/library/paths/0"), Some(&Value::String("/games".into())));
+        assert_eq!(body.pointer("/titles/region"), Some(&Value::String("US".into())));
 
         let users =
             server.get("/api/users").add_header("Authorization", "Basic YWRtaW46c2VjcmV0").await;
         assert_eq!(users.status_code(), StatusCode::OK);
         let body: Value = users.json();
-        assert_eq!(body.get("success"), Some(&Value::Bool(true)));
-        assert_eq!(body.pointer("/users/0/username"), Some(&Value::String("admin".into())));
+        assert_eq!(body.pointer("/0/user"), Some(&Value::String("admin".into())));
 
         Ok(())
     }
 
     #[tokio::test]
-    async fn auth_settings_stub_routes_report_persistence_gaps() -> Result<()> {
+    async fn mutable_settings_routes_persist_compatible_payloads() -> Result<()> {
         let state = test_app_state(
             Catalog::from_files(Vec::new()),
             std::env::temp_dir(),
@@ -260,34 +277,31 @@ mod tests {
         );
         let server = TestServer::new(router(state))?;
 
-        for path in [
-            "/api/settings/titles",
-            "/api/settings/shop",
-            "/api/settings/library/paths",
-            "/api/settings/library/management",
-            "/api/settings/scheduler",
-            "/api/upload",
-            "/api/user/signup",
-        ] {
-            let response =
-                server.post(path).add_header("Authorization", "Basic YWRtaW46c2VjcmV0").await;
-            assert_eq!(response.status_code(), StatusCode::OK, "{path}");
+        let cases = [
+            ("/api/settings/titles", serde_json::json!({"region": "EU", "language": "fr"})),
+            ("/api/settings/shop", serde_json::to_value(crate::settings::ShopSettings::default())?),
+            (
+                "/api/settings/library/management",
+                serde_json::to_value(crate::settings::LibraryManagementSettings::default())?,
+            ),
+            ("/api/settings/scheduler", serde_json::json!({"scan_interval": "30m"})),
+        ];
+        for (path, payload) in cases {
+            let response = server
+                .post(path)
+                .add_header("Authorization", "Basic YWRtaW46c2VjcmV0")
+                .json(&payload)
+                .await;
+            assert_eq!(response.status_code(), StatusCode::OK, "{path}: {}", response.text());
             let body: Value = response.json();
-            assert_eq!(body.get("success"), Some(&Value::Bool(false)), "{path}");
-            assert_eq!(body.get("persistence_required"), Some(&Value::Bool(true)), "{path}");
+            assert_eq!(body.get("success"), Some(&Value::Bool(true)), "{path}");
         }
-
-        let response =
-            server.delete("/api/user").add_header("Authorization", "Basic YWRtaW46c2VjcmV0").await;
-        assert_eq!(response.status_code(), StatusCode::OK);
-        let body: Value = response.json();
-        assert_eq!(body.get("success"), Some(&Value::Bool(false)));
 
         Ok(())
     }
 
     #[tokio::test]
-    async fn settings_routes_are_unavailable_when_auth_disabled() -> Result<()> {
+    async fn settings_routes_allow_first_admin_setup_when_auth_disabled() -> Result<()> {
         let state = test_app_state(
             Catalog::from_files(Vec::new()),
             std::env::temp_dir(),
@@ -297,9 +311,9 @@ mod tests {
 
         let server = TestServer::new(router(state))?;
         let settings = server.get("/api/settings").await;
-        assert_eq!(settings.status_code(), StatusCode::NOT_FOUND);
+        assert_eq!(settings.status_code(), StatusCode::OK);
         let login = server.get("/admin/login").await;
-        assert_eq!(login.status_code(), StatusCode::NOT_FOUND);
+        assert_eq!(login.status_code(), StatusCode::OK);
         Ok(())
     }
 
@@ -357,12 +371,15 @@ mod tests {
     #[tokio::test]
     async fn shop_response_contains_files_list() -> Result<()> {
         let catalog = Catalog::from_files(vec![ContentFile {
+            id: 0,
+            library_root: PathBuf::new(),
             relative_path: PathBuf::from("demo.nsp"),
             name: String::from("demo.nsp"),
             size: 10,
             title_id: Some(String::from("0100000000000000")),
             version: Some(0),
             kind: ContentKind::Base,
+            identified_contents: Vec::new(),
         }]);
 
         let state = test_app_state(
@@ -392,12 +409,15 @@ mod tests {
     #[tokio::test]
     async fn shop_root_returns_tinfoil_payload_when_encryption_enabled() -> Result<()> {
         let catalog = Catalog::from_files(vec![ContentFile {
+            id: 0,
+            library_root: PathBuf::new(),
             relative_path: PathBuf::from("demo.nsp"),
             name: String::from("demo.nsp"),
             size: 10,
             title_id: Some(String::from("0100000000000000")),
             version: Some(0),
             kind: ContentKind::Base,
+            identified_contents: Vec::new(),
         }]);
 
         let state = test_app_state_with_options(
@@ -410,7 +430,16 @@ mod tests {
         );
 
         let server = TestServer::new(router(state))?;
-        let response = server.get("/").add_header("User-Agent", "Tinfoil/1.0").await;
+        let response = server
+            .get("/")
+            .add_header("Theme", "dark")
+            .add_header("Uid", "test")
+            .add_header("Version", "18.0")
+            .add_header("Revision", "1")
+            .add_header("Language", "en")
+            .add_header("Hauth", "")
+            .add_header("Uauth", "")
+            .await;
 
         assert_eq!(response.status_code(), StatusCode::OK);
         assert_eq!(response.header("content-type"), "application/octet-stream");
@@ -439,19 +468,22 @@ mod tests {
             .await;
 
         assert_eq!(response.status_code(), StatusCode::SEE_OTHER);
-        assert_eq!(response.header("location"), "/admin");
+        assert_eq!(response.header("location"), "/login");
         Ok(())
     }
 
     #[tokio::test]
     async fn root_response_contains_files_list() -> Result<()> {
         let catalog = Catalog::from_files(vec![ContentFile {
+            id: 0,
+            library_root: PathBuf::new(),
             relative_path: PathBuf::from("demo.nsp"),
             name: String::from("demo.nsp"),
             size: 10,
             title_id: Some(String::from("0100000000000000")),
             version: Some(0),
             kind: ContentKind::Base,
+            identified_contents: Vec::new(),
         }]);
 
         let state = test_app_state(
@@ -479,12 +511,15 @@ mod tests {
     #[tokio::test]
     async fn shop_sections_returns_section_items() -> Result<()> {
         let catalog = Catalog::from_files(vec![ContentFile {
+            id: 0,
+            library_root: PathBuf::new(),
             relative_path: PathBuf::from("demo.nsp"),
             name: String::from("demo.nsp"),
             size: 10,
             title_id: Some(String::from("0100000000000000")),
             version: Some(0),
             kind: ContentKind::Base,
+            identified_contents: Vec::new(),
         }]);
 
         let state = test_app_state(
@@ -520,12 +555,15 @@ mod tests {
     #[tokio::test]
     async fn shop_sections_returns_tinfoil_payload_when_encryption_enabled() -> Result<()> {
         let catalog = Catalog::from_files(vec![ContentFile {
+            id: 0,
+            library_root: PathBuf::new(),
             relative_path: PathBuf::from("demo.nsp"),
             name: String::from("demo.nsp"),
             size: 10,
             title_id: Some(String::from("0100000000000000")),
             version: Some(0),
             kind: ContentKind::Base,
+            identified_contents: Vec::new(),
         }]);
 
         let state = test_app_state_with_options(
@@ -538,8 +576,16 @@ mod tests {
         );
 
         let server = TestServer::new(router(state))?;
-        let response =
-            server.get("/api/shop/sections").add_header("User-Agent", "Tinfoil/1.0").await;
+        let response = server
+            .get("/api/shop/sections")
+            .add_header("Theme", "dark")
+            .add_header("Uid", "test")
+            .add_header("Version", "18.0")
+            .add_header("Revision", "1")
+            .add_header("Language", "en")
+            .add_header("Hauth", "")
+            .add_header("Uauth", "")
+            .await;
 
         assert_eq!(response.status_code(), StatusCode::OK);
         assert_eq!(response.header("content-type"), "application/octet-stream");
@@ -551,12 +597,15 @@ mod tests {
     #[tokio::test]
     async fn shop_sections_new_falls_back_to_all_when_no_base_items() -> Result<()> {
         let catalog = Catalog::from_files(vec![ContentFile {
+            id: 0,
+            library_root: PathBuf::new(),
             relative_path: PathBuf::from("update.nsp"),
             name: String::from("update.nsp"),
             size: 10,
             title_id: Some(String::from("0100000000000800")),
             version: Some(65536),
             kind: ContentKind::Update,
+            identified_contents: Vec::new(),
         }]);
 
         let state = test_app_state(
@@ -586,12 +635,15 @@ mod tests {
     #[tokio::test]
     async fn update_section_item_uses_base_title_id_and_update_app_id() -> Result<()> {
         let catalog = Catalog::from_files(vec![ContentFile {
+            id: 0,
+            library_root: PathBuf::new(),
             relative_path: PathBuf::from("update.nsp"),
             name: String::from("update.nsp"),
             size: 10,
             title_id: Some(String::from("0100ABCD12340800")),
             version: Some(65536),
             kind: ContentKind::Update,
+            identified_contents: Vec::new(),
         }]);
 
         let state = test_app_state(
@@ -630,12 +682,15 @@ mod tests {
     #[tokio::test]
     async fn dlc_section_item_uses_base_title_id_and_dlc_app_id() -> Result<()> {
         let catalog = Catalog::from_files(vec![ContentFile {
+            id: 0,
+            library_root: PathBuf::new(),
             relative_path: PathBuf::from("dlc.nsp"),
             name: String::from("dlc.nsp"),
             size: 10,
             title_id: Some(String::from("0100ABCD12341001")),
             version: Some(0),
             kind: ContentKind::Dlc,
+            identified_contents: Vec::new(),
         }]);
 
         let state = test_app_state(
@@ -675,20 +730,26 @@ mod tests {
     async fn updates_section_keeps_only_latest_version_per_base_title() -> Result<()> {
         let catalog = Catalog::from_files(vec![
             ContentFile {
+                id: 0,
+                library_root: PathBuf::new(),
                 relative_path: PathBuf::from("update-old.nsp"),
                 name: String::from("update-old.nsp"),
                 size: 10,
                 title_id: Some(String::from("0100ABCD12340800")),
                 version: Some(65536),
                 kind: ContentKind::Update,
+                identified_contents: Vec::new(),
             },
             ContentFile {
+                id: 0,
+                library_root: PathBuf::new(),
                 relative_path: PathBuf::from("update-new.nsp"),
                 name: String::from("update-new.nsp"),
                 size: 10,
                 title_id: Some(String::from("0100ABCD12340800")),
                 version: Some(131_072),
                 kind: ContentKind::Update,
+                identified_contents: Vec::new(),
             },
         ]);
 

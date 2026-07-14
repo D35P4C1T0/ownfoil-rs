@@ -8,6 +8,8 @@ use thiserror::Error;
 pub enum ApiError {
     #[error("unauthorized")]
     Unauthorized,
+    #[error("forbidden")]
+    Forbidden,
     #[error("title not found")]
     TitleNotFound,
     #[error("invalid path")]
@@ -24,6 +26,7 @@ impl ApiError {
     pub const fn status(&self) -> StatusCode {
         match self {
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
+            Self::Forbidden => StatusCode::FORBIDDEN,
             Self::TitleNotFound | Self::NotFound => StatusCode::NOT_FOUND,
             Self::InvalidPath => StatusCode::BAD_REQUEST,
             Self::InvalidRange => StatusCode::RANGE_NOT_SATISFIABLE,

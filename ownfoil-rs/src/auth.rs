@@ -26,9 +26,11 @@
 //!
 //! **Security:** Use `chmod 600` on the auth file. The server warns if it is world-readable (Unix).
 
-use std::collections::BTreeMap;
 use std::path::Path;
 
+use dashmap::DashMap;
+use scrypt::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
+use scrypt::{Scrypt, password_hash};
 use serde::Deserialize;
 use subtle::ConstantTimeEq;
 use thiserror::Error;
@@ -36,12 +38,33 @@ use tracing::warn;
 
 #[derive(Debug, Clone)]
 pub struct AuthSettings {
-    users: BTreeMap<String, String>,
+    users: DashMap<String, AuthRecord>,
+}
+
+#[derive(Debug, Clone)]
+struct AuthRecord {
+    credential: Credential,
+    admin_access: bool,
+    shop_access: bool,
+    backup_access: bool,
+}
+
+#[derive(Debug, Clone)]
+enum Credential {
+    Plaintext(String),
+    Scrypt(String),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AuthRoles {
+    pub admin_access: bool,
+    pub shop_access: bool,
+    pub backup_access: bool,
 }
 
 impl AuthSettings {
     pub fn from_users(users: Vec<AuthUser>) -> Self {
-        let mut mapped = BTreeMap::new();
+        let mapped = DashMap::new();
 
         for user in users {
             let username = user.username.trim().to_string();
@@ -49,7 +72,15 @@ impl AuthSettings {
             if username.is_empty() || password.is_empty() {
                 continue;
             }
-            mapped.insert(username, password);
+            mapped.insert(
+                username,
+                AuthRecord {
+                    credential: Credential::Plaintext(password),
+                    admin_access: true,
+                    shop_access: true,
+                    backup_access: true,
+                },
+            );
         }
 
         Self { users: mapped }
@@ -64,20 +95,94 @@ impl AuthSettings {
     }
 
     pub fn usernames(&self) -> Vec<String> {
-        self.users.keys().cloned().collect()
+        let mut users = self.users.iter().map(|entry| entry.key().clone()).collect::<Vec<_>>();
+        users.sort();
+        users
     }
 
     pub fn is_authorized(&self, username: &str, password: &str) -> bool {
-        self.users.get(username).is_some_and(|known_password| {
-            let a = password.as_bytes();
-            let b = known_password.as_bytes();
-            a.ct_eq(b).into()
+        self.users.get(username).is_some_and(|record| match &record.credential {
+            Credential::Plaintext(known_password) => {
+                password.as_bytes().ct_eq(known_password.as_bytes()).into()
+            }
+            Credential::Scrypt(hash) => {
+                PasswordHash::new(hash).ok().is_some_and(|parsed| {
+                    Scrypt.verify_password(password.as_bytes(), &parsed).is_ok()
+                }) || verify_werkzeug_scrypt(password, hash)
+            }
         })
     }
 
-    fn into_users(self) -> BTreeMap<String, String> {
-        self.users
+    pub fn roles(&self, username: &str) -> Option<AuthRoles> {
+        self.users.get(username).map(|record| AuthRoles {
+            admin_access: record.admin_access,
+            shop_access: record.shop_access,
+            backup_access: record.backup_access,
+        })
     }
+
+    pub fn upsert_hashed_user(&self, username: String, password_hash: String, roles: AuthRoles) {
+        self.users.insert(
+            username,
+            AuthRecord {
+                credential: Credential::Scrypt(password_hash),
+                admin_access: roles.admin_access,
+                shop_access: roles.shop_access,
+                backup_access: roles.backup_access,
+            },
+        );
+    }
+
+    pub fn remove_user(&self, username: &str) {
+        self.users.remove(username);
+    }
+}
+
+pub fn hash_password(password: &str) -> Result<String, password_hash::Error> {
+    let salt = SaltString::generate(&mut rand::rngs::OsRng);
+    Scrypt.hash_password(password.as_bytes(), &salt).map(|hash| hash.to_string())
+}
+
+fn verify_werkzeug_scrypt(password: &str, encoded: &str) -> bool {
+    let mut sections = encoded.split('$');
+    let Some(method) = sections.next() else {
+        return false;
+    };
+    let Some(salt) = sections.next() else {
+        return false;
+    };
+    let Some(expected) = sections.next() else {
+        return false;
+    };
+    if sections.next().is_some() || expected.len() % 2 != 0 {
+        return false;
+    }
+    let mut parameters = method.split(':');
+    if parameters.next() != Some("scrypt") {
+        return false;
+    }
+    let Some(n) = parameters.next().and_then(|value| value.parse::<u32>().ok()) else {
+        return false;
+    };
+    let Some(r) = parameters.next().and_then(|value| value.parse::<u32>().ok()) else {
+        return false;
+    };
+    let Some(p) = parameters.next().and_then(|value| value.parse::<u32>().ok()) else {
+        return false;
+    };
+    if parameters.next().is_some() || !n.is_power_of_two() {
+        return false;
+    }
+    let log_n = u8::try_from(n.ilog2()).unwrap_or(u8::MAX);
+    let Ok(params) = scrypt::Params::new(log_n, r, p, expected.len() / 2) else {
+        return false;
+    };
+    let mut derived = vec![0_u8; expected.len() / 2];
+    if scrypt::scrypt(password.as_bytes(), salt.as_bytes(), &params, &mut derived).is_err() {
+        return false;
+    }
+    let actual = hex::encode(derived);
+    actual.as_bytes().ct_eq(expected.as_bytes()).into()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -162,13 +267,19 @@ pub fn load_users_from_file(path: Option<&Path>) -> Result<Vec<AuthUser>, AuthFi
         );
     }
 
-    let settings = AuthSettings::from_users(users);
+    let settings = AuthSettings::from_users(users.clone());
     if settings.is_enabled() {
-        Ok(settings
-            .into_users()
-            .into_iter()
-            .map(|(username, password)| AuthUser { username, password })
-            .collect::<Vec<_>>())
+        let normalized = settings.usernames();
+        let normalized_users =
+            normalized
+                .into_iter()
+                .filter_map(|username| {
+                    users.iter().rev().find(|user| user.username.trim() == username).map(|user| {
+                        AuthUser { username, password: user.password.trim().to_string() }
+                    })
+                })
+                .collect::<Vec<_>>();
+        Ok(normalized_users)
     } else {
         Err(AuthFileError::EmptyCredentials { path: path.display().to_string() })
     }
@@ -180,7 +291,7 @@ mod tests {
     use anyhow::Result;
     use tempfile::tempdir;
 
-    use super::{AuthSettings, AuthUser, load_users_from_file};
+    use super::{AuthRoles, AuthSettings, AuthUser, hash_password, load_users_from_file};
 
     #[test]
     fn auth_settings_merges_duplicate_users() {
@@ -251,5 +362,21 @@ mod tests {
             password: String::from("secret"),
         }]);
         assert!(!settings.is_authorized("bob", "secret"));
+    }
+
+    #[test]
+    fn scrypt_users_verify_without_storing_plaintext() -> Result<()> {
+        let settings = AuthSettings::from_users(Vec::new());
+        let hash = hash_password("correct horse")?;
+        settings.upsert_hashed_user(
+            "admin".to_string(),
+            hash,
+            AuthRoles { admin_access: true, shop_access: true, backup_access: true },
+        );
+
+        assert!(settings.is_authorized("admin", "correct horse"));
+        assert!(!settings.is_authorized("admin", "wrong"));
+        assert!(settings.roles("admin").is_some_and(|roles| roles.admin_access));
+        Ok(())
     }
 }
