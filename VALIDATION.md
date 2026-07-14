@@ -26,8 +26,11 @@ hardware, GitHub-hosted builders, or a long-running external TitleDB transfer.
 - A 2.34 GB file returned correct HEAD and `bytes 0-1023` range responses.
   Thirty-two concurrent ranges all returned 206. A 64-request health burst was
   rate-limited without restart, and SQLite integrity remained `ok`.
-- ARMv6 `arm-unknown-linux-musleabihf` static release cross-compilation produced a
-  valid ARM EABI5 hard-float executable without local CPU emulation.
+- GitHub Actions cross-compiled and published verified amd64, arm64, arm/v7, and
+  arm/v6 OCI manifests for `main`, `latest`, and `v0.3.0`. The ARMv6 build also
+  produced a valid ARM EABI5 hard-float executable locally without CPU emulation.
+- GitHub Actions built and attached Linux x86-64, macOS ARM64, and Windows x86-64
+  archives to the v0.3.0 release.
 - Live regional TitleDB retrieval parsed 61,798 entries through HTTP byte ranges
   and cached a 17,318,870-byte US English titles file without downloading the full
   1.88 GB ZIP.
@@ -38,8 +41,6 @@ hardware, GitHub-hosted builders, or a long-running external TitleDB transfer.
   login, public/private shops, encrypted Tinfoil, filters, install, resume, icons,
   banners, and host authorization.
 - Run and compare the complete pinned-Python golden HTTP matrix.
-- Run the multi-architecture container workflow on GitHub-hosted builders and
-  verify the published manifest for amd64, arm64, arm/v7, and arm/v6.
 - Allow a complete live TitleDB artifact refresh to finish and verify all cached
   versions, CNMT, and language data.
 

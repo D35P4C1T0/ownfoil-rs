@@ -128,9 +128,8 @@ These are verification gates, not missing server features:
   authentication, range/HEAD downloads, accounting, restart, and graceful stop.
 - [x] Compose render/start/health/stop and Helm lint/schema validation plus a real
   Kubernetes install, upgrade, rollback, persistence, and uninstall trial.
-- [~] Cross-compile amd64, arm64, arm/v7, and arm/v6 container binaries and run the
-  manifest workflow in GitHub Actions. ARMv6 static compilation is proven locally;
-  hosted multi-architecture publication remains pending.
+- [x] Cross-compile and publish amd64, arm64, arm/v7, and arm/v6 images through
+  GitHub Actions, with verified `main`, `latest`, and `v0.3.0` OCI manifests.
 - [x] Scan and restart a real 98-file, 185 GB library; verify stable IDs, watcher
   reconciliation, 32 concurrent ranges, rate limiting, SQLite integrity, and
   graceful restart.
@@ -144,6 +143,6 @@ A stable parity claim requires every external validation item above to be `[x]`,
 with zero unexplained response diffs and no known auth bypass, secret disclosure,
 path traversal, migration corruption, or organizer data-loss issue. The v0.3.0
 release is an integration preview while Switch-client, complete golden-matrix,
-hosted multi-architecture, and full live TitleDB validation remain open.
+and full live TitleDB validation remain open.
 Intentional security and Rust-extension differences live in
 `ownfoil-rs/PARITY_NOTES.md`.
