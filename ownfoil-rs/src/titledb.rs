@@ -7,7 +7,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use tokio::sync::{RwLock, broadcast};
+use rusqlite::{Connection, OptionalExtension, params};
+use tokio::sync::{Mutex, broadcast};
 use tracing::{debug, error, info, warn};
 
 use crate::config::TitleDbConfig;
@@ -58,15 +59,14 @@ struct TitleDbArtifacts {
 /// Lazy-loaded `TitleDB` cache. Loads from disk on first access, refreshes in background.
 #[derive(Debug, Clone)]
 pub struct TitleDb {
-    inner: Arc<RwLock<TitleDbInner>>,
+    inner: Arc<Mutex<TitleDbInner>>,
     refreshing: Arc<AtomicBool>,
     generation: Arc<AtomicU64>,
 }
 
 #[derive(Debug)]
 struct TitleDbInner {
-    map: HashMap<String, TitleInfo>,
-    artifacts: TitleDbArtifacts,
+    db: Connection,
     config: TitleDbConfig,
     data_dir: PathBuf,
     last_refresh: Option<std::time::Instant>,
@@ -82,13 +82,14 @@ impl TitleDb {
 
     #[cfg(test)]
     pub fn from_entries(entries: impl IntoIterator<Item = (String, TitleInfo)>) -> Self {
+        let mut db = memory_database();
+        let map = entries.into_iter().map(|(id, info)| (id.to_ascii_uppercase(), info)).collect();
+        if let Err(error) = replace_titles(&mut db, &map) {
+            panic!("in-memory TitleDB rejected fixtures: {error}");
+        }
         Self {
-            inner: Arc::new(RwLock::new(TitleDbInner {
-                map: entries
-                    .into_iter()
-                    .map(|(id, info)| (id.to_ascii_uppercase(), info))
-                    .collect(),
-                artifacts: TitleDbArtifacts::default(),
+            inner: Arc::new(Mutex::new(TitleDbInner {
+                db,
                 config: TitleDbConfig { enabled: false, ..Default::default() },
                 data_dir: PathBuf::from("."),
                 last_refresh: None,
@@ -101,10 +102,13 @@ impl TitleDb {
 
     #[cfg(test)]
     fn from_artifacts(artifacts: TitleDbArtifacts) -> Self {
+        let mut db = memory_database();
+        if let Err(error) = replace_artifacts(&mut db, &artifacts) {
+            panic!("in-memory TitleDB rejected artifacts: {error}");
+        }
         Self {
-            inner: Arc::new(RwLock::new(TitleDbInner {
-                map: HashMap::new(),
-                artifacts,
+            inner: Arc::new(Mutex::new(TitleDbInner {
+                db,
                 config: TitleDbConfig { enabled: false, ..Default::default() },
                 data_dir: PathBuf::from("."),
                 last_refresh: None,
@@ -131,16 +135,27 @@ impl TitleDb {
             data_dir = %data_dir.display(),
             "titledb initialized"
         );
-        let cache_dir = data_dir.join("titledb");
-        let cache_path =
-            cache_dir.join(format!("titles.{}.{}.json", config.region, config.language));
-        let map = load_cache(&cache_path).unwrap_or_default();
-        let artifacts = load_artifact_cache(&cache_dir).unwrap_or_default();
-        let initial_generation = u64::from(!map.is_empty() || !artifacts.is_empty());
+        let mut db = open_database(&data_dir).unwrap_or_else(|error| {
+            warn!(error = %error, "failed to open TitleDB SQLite cache; using memory");
+            memory_database()
+        });
+        if config.enabled && !database_matches_config(&db, &config) {
+            if let Err(error) = clear_database(&mut db) {
+                warn!(error = %error, "failed to reset stale TitleDB SQLite cache");
+            }
+            if let Err(error) = import_json_cache(&mut db, &data_dir, &config) {
+                warn!(error = %error, "failed to import legacy TitleDB cache");
+            }
+            if title_count(&db) > 0 {
+                if let Err(error) = set_database_config(&db, &config) {
+                    warn!(error = %error, "failed to record imported TitleDB configuration");
+                }
+            }
+        }
+        let initial_generation = u64::from(title_count(&db) > 0);
         Self {
-            inner: Arc::new(RwLock::new(TitleDbInner {
-                map,
-                artifacts,
+            inner: Arc::new(Mutex::new(TitleDbInner {
+                db,
                 config,
                 data_dir,
                 last_refresh: None,
@@ -153,21 +168,56 @@ impl TitleDb {
 
     #[allow(dead_code)]
     pub async fn progress_subscribe(&self) -> Option<broadcast::Receiver<String>> {
-        self.inner.read().await.progress_tx.as_ref().map(broadcast::Sender::subscribe)
+        self.inner.lock().await.progress_tx.as_ref().map(broadcast::Sender::subscribe)
     }
 
     /// Look up icon and banner URLs for a title ID (16-char hex, uppercase).
     pub async fn lookup(&self, title_id: &str) -> Option<TitleInfo> {
         let normalized = title_id.to_uppercase();
-        let guard = self.inner.read().await;
-        guard.map.get(&normalized).cloned()
+        let guard = self.inner.lock().await;
+        guard
+            .db
+            .query_row(
+                "SELECT icon_url, banner_url, name FROM titles WHERE id = ?1",
+                [normalized],
+                |row| {
+                    Ok(TitleInfo {
+                        icon_url: row.get(0)?,
+                        banner_url: row.get(1)?,
+                        name: row.get(2)?,
+                    })
+                },
+            )
+            .optional()
+            .ok()
+            .flatten()
     }
 
     /// Return known update versions for a title or application ID.
     pub async fn versions(&self, title_id: &str) -> Option<TitleVersionInfo> {
         let normalized = normalize_title_id(title_id)?;
-        let guard = self.inner.read().await;
-        guard.artifacts.versions.get(&normalized).cloned()
+        let guard = self.inner.lock().await;
+        guard
+            .db
+            .query_row(
+                "SELECT latest_version, versions FROM versions WHERE title_id = ?1",
+                [&normalized],
+                |row| {
+                    let latest: Option<i64> = row.get(0)?;
+                    let versions: String = row.get(1)?;
+                    Ok((latest, versions))
+                },
+            )
+            .optional()
+            .ok()
+            .flatten()
+            .and_then(|(latest, versions)| {
+                Some(TitleVersionInfo {
+                    title_id: normalized,
+                    latest_version: latest.and_then(|value| u64::try_from(value).ok()),
+                    versions: serde_json::from_str(&versions).ok()?,
+                })
+            })
     }
 
     /// Return the latest known update version for a title or application ID.
@@ -178,33 +228,57 @@ impl TitleDb {
     /// Return known CNMT metadata for a title/application/update/DLC ID.
     pub async fn cnmt(&self, app_id: &str) -> Option<TitleCnmtInfo> {
         let normalized = normalize_title_id(app_id)?;
-        let guard = self.inner.read().await;
+        let guard = self.inner.lock().await;
         guard
-            .artifacts
-            .cnmts
-            .get(&normalized)
-            .and_then(|items| items.iter().max_by_key(|item| item.version.unwrap_or(0)).cloned())
+            .db
+            .query_row(
+                "SELECT title_id, title_type, base_title_id, version, required_system_version \
+                 FROM cnmts WHERE app_id = ?1 ORDER BY COALESCE(version, 0) DESC LIMIT 1",
+                [normalized],
+                cnmt_from_row,
+            )
+            .optional()
+            .ok()
+            .flatten()
     }
 
     /// Return language metadata for a title/application ID.
     pub async fn languages(&self, title_id: &str) -> Option<TitleLanguageInfo> {
         let normalized = normalize_title_id(title_id)?;
-        let guard = self.inner.read().await;
-        guard.artifacts.languages.get(&normalized).cloned()
+        let guard = self.inner.lock().await;
+        guard
+            .db
+            .query_row(
+                "SELECT languages FROM languages WHERE title_id = ?1",
+                [&normalized],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .ok()
+            .flatten()
+            .and_then(|languages| {
+                Some(TitleLanguageInfo {
+                    title_id: normalized,
+                    languages: serde_json::from_str(&languages).ok()?,
+                })
+            })
     }
 
     pub async fn region_language_available(&self, region: &str, language: &str) -> Option<bool> {
-        let guard = self.inner.read().await;
-        if guard.artifacts.regions.is_empty() {
-            return None;
-        }
-        Some(
-            guard
-                .artifacts
-                .regions
-                .get(&region.to_ascii_uppercase())
-                .is_some_and(|languages| languages.iter().any(|known| known == language)),
-        )
+        let guard = self.inner.lock().await;
+        let languages = guard
+            .db
+            .query_row(
+                "SELECT languages FROM regions WHERE region = ?1",
+                [region.to_ascii_uppercase()],
+                |row| row.get::<_, String>(0),
+            )
+            .optional()
+            .ok()
+            .flatten()?;
+        serde_json::from_str::<Vec<String>>(&languages)
+            .ok()
+            .map(|known| known.iter().any(|value| value == language))
     }
 
     /// Return known update CNMT entries for the given base title ID.
@@ -212,17 +286,8 @@ impl TitleDb {
         let Some(normalized) = normalize_title_id(title_id) else {
             return Vec::new();
         };
-        let mut out: Vec<_> = {
-            let guard = self.inner.read().await;
-            guard
-                .artifacts
-                .cnmts
-                .values()
-                .flatten()
-                .filter(|info| info.is_update_for(&normalized))
-                .cloned()
-                .collect()
-        };
+        let mut out = self.cnmts_for_base(&normalized).await;
+        out.retain(|info| info.is_update_for(&normalized));
         out.sort_by(|a, b| a.title_id.cmp(&b.title_id));
         out
     }
@@ -232,17 +297,8 @@ impl TitleDb {
         let Some(normalized) = normalize_title_id(title_id) else {
             return Vec::new();
         };
-        let mut out: Vec<_> = {
-            let guard = self.inner.read().await;
-            guard
-                .artifacts
-                .cnmts
-                .values()
-                .flatten()
-                .filter(|info| info.is_dlc_for(&normalized))
-                .cloned()
-                .collect()
-        };
+        let mut out = self.cnmts_for_base(&normalized).await;
+        out.retain(|info| info.is_dlc_for(&normalized));
         out.sort_by(|a, b| a.title_id.cmp(&b.title_id));
         out
     }
@@ -274,23 +330,37 @@ impl TitleDb {
     }
 
     pub async fn config(&self) -> TitleDbConfig {
-        self.inner.read().await.config.clone()
+        self.inner.lock().await.config.clone()
     }
 
     pub async fn set_config(&self, config: TitleDbConfig) {
-        self.inner.write().await.config = config;
+        self.inner.lock().await.config = config;
     }
 
     pub async fn last_refresh(&self) -> Option<std::time::Instant> {
-        self.inner.read().await.last_refresh
+        self.inner.lock().await.last_refresh
     }
 
     pub async fn entry_count(&self) -> usize {
-        self.inner.read().await.map.len()
+        title_count(&self.inner.lock().await.db)
     }
 
     pub fn generation(&self) -> u64 {
         self.generation.load(Ordering::Acquire)
+    }
+
+    async fn cnmts_for_base(&self, base_title_id: &str) -> Vec<TitleCnmtInfo> {
+        let guard = self.inner.lock().await;
+        let Ok(mut statement) = guard.db.prepare(
+            "SELECT title_id, title_type, base_title_id, version, required_system_version \
+             FROM cnmts WHERE base_title_id = ?1",
+        ) else {
+            return Vec::new();
+        };
+        statement
+            .query_map([base_title_id], cnmt_from_row)
+            .map(|rows| rows.filter_map(Result::ok).collect())
+            .unwrap_or_default()
     }
 }
 
@@ -303,9 +373,9 @@ fn send_progress(tx: Option<&broadcast::Sender<String>>, msg: &str) {
 /// Fetch and merge `TitleDB` data without holding the lock, then apply in a short write.
 #[allow(clippy::too_many_lines)]
 #[allow(clippy::cognitive_complexity)]
-async fn do_refresh_without_lock(inner: &RwLock<TitleDbInner>) -> Result<(), TitleDbError> {
+async fn do_refresh_without_lock(inner: &Mutex<TitleDbInner>) -> Result<(), TitleDbError> {
     let (enabled, region, lang, url_override, data_dir, progress_tx) = {
-        let guard = inner.read().await;
+        let guard = inner.lock().await;
         if !guard.config.enabled {
             debug!("titledb refresh skipped (disabled)");
             return Ok(());
@@ -355,13 +425,14 @@ async fn do_refresh_without_lock(inner: &RwLock<TitleDbInner>) -> Result<(), Tit
     if merged.is_empty() {
         send_progress(progress_tx.as_ref(), "[titledb] network empty, trying cache...");
         info!("titledb network fetch returned no data, trying cache");
-        if cache_path.exists() {
+        let has_titles = title_count(&inner.lock().await.db) > 0;
+        if !has_titles && cache_path.exists() {
             match load_cache(&cache_path) {
                 Ok(loaded) => {
                     let count = loaded.len();
                     {
-                        let mut guard = inner.write().await;
-                        guard.map = loaded;
+                        let mut guard = inner.lock().await;
+                        replace_titles(&mut guard.db, &loaded)?;
                         guard.last_refresh = Some(std::time::Instant::now());
                     }
                     send_progress(
@@ -382,7 +453,7 @@ async fn do_refresh_without_lock(inner: &RwLock<TitleDbInner>) -> Result<(), Tit
                     );
                 }
             }
-        } else {
+        } else if !has_titles {
             send_progress(progress_tx.as_ref(), "[titledb] empty, no cache available");
             warn!(
                 path = %cache_path.display(),
@@ -391,15 +462,10 @@ async fn do_refresh_without_lock(inner: &RwLock<TitleDbInner>) -> Result<(), Tit
         }
     } else {
         let count = merged.len();
-        if let Err(e) = save_cache(&cache_path, &merged) {
-            warn!(path = %cache_path.display(), error = %e, "titledb cache save failed");
-        } else {
-            send_progress(progress_tx.as_ref(), "[titledb] cache saved");
-            debug!(path = %cache_path.display(), "titledb cache saved");
-        }
         {
-            let mut guard = inner.write().await;
-            guard.map = merged;
+            let mut guard = inner.lock().await;
+            replace_titles(&mut guard.db, &merged)?;
+            set_database_config(&guard.db, &guard.config)?;
             guard.last_refresh = Some(std::time::Instant::now());
         }
         send_progress(
@@ -408,14 +474,15 @@ async fn do_refresh_without_lock(inner: &RwLock<TitleDbInner>) -> Result<(), Tit
         );
         info!(entries = count, "titledb loaded from network");
     }
+    drop(merged);
 
     match refresh_artifacts(&sources, parent, progress_tx.as_ref()).await {
         Ok(Some(artifacts)) => {
             let counts =
                 (artifacts.versions.len(), artifacts.cnmts.len(), artifacts.languages.len());
             {
-                let mut guard = inner.write().await;
-                guard.artifacts = artifacts;
+                let mut guard = inner.lock().await;
+                replace_artifacts(&mut guard.db, &artifacts)?;
             }
             send_progress(
                 progress_tx.as_ref(),
@@ -680,7 +747,6 @@ async fn refresh_artifacts(
     for source in sources {
         match fetch_artifacts_from_source(source).await {
             Ok(artifacts) if !artifacts.is_empty() => {
-                save_artifact_cache(cache_dir, &artifacts)?;
                 return Ok(Some(artifacts));
             }
             Ok(_) => {}
@@ -1179,6 +1245,199 @@ fn language_values(value: &serde_json::Value) -> Vec<String> {
     values
 }
 
+fn memory_database() -> Connection {
+    let db = Connection::open_in_memory()
+        .unwrap_or_else(|error| panic!("failed to open in-memory SQLite database: {error}"));
+    initialize_database(&db)
+        .unwrap_or_else(|error| panic!("failed to initialize in-memory SQLite schema: {error}"));
+    db
+}
+
+fn open_database(data_dir: &std::path::Path) -> Result<Connection, TitleDbError> {
+    let cache_dir = data_dir.join("titledb");
+    std::fs::create_dir_all(&cache_dir)?;
+    let db = Connection::open(cache_dir.join("metadata.sqlite"))?;
+    initialize_database(&db)?;
+    Ok(db)
+}
+
+fn initialize_database(db: &Connection) -> Result<(), rusqlite::Error> {
+    db.execute_batch(
+        "PRAGMA journal_mode=WAL;
+         PRAGMA synchronous=NORMAL;
+         PRAGMA cache_size=-2048;
+         CREATE TABLE IF NOT EXISTS titles (
+           id TEXT PRIMARY KEY, icon_url TEXT, banner_url TEXT, name TEXT
+         ) WITHOUT ROWID;
+         CREATE TABLE IF NOT EXISTS versions (
+           title_id TEXT PRIMARY KEY, latest_version INTEGER, versions TEXT NOT NULL
+         ) WITHOUT ROWID;
+         CREATE TABLE IF NOT EXISTS cnmts (
+           app_id TEXT NOT NULL, title_id TEXT NOT NULL, title_type TEXT,
+           base_title_id TEXT, version INTEGER, required_system_version INTEGER
+         );
+         CREATE INDEX IF NOT EXISTS cnmts_app_id ON cnmts(app_id);
+         CREATE INDEX IF NOT EXISTS cnmts_base_title_id ON cnmts(base_title_id);
+         CREATE TABLE IF NOT EXISTS languages (
+           title_id TEXT PRIMARY KEY, languages TEXT NOT NULL
+         ) WITHOUT ROWID;
+         CREATE TABLE IF NOT EXISTS regions (
+           region TEXT PRIMARY KEY, languages TEXT NOT NULL
+         ) WITHOUT ROWID;
+         CREATE TABLE IF NOT EXISTS metadata (
+           key TEXT PRIMARY KEY, value TEXT NOT NULL
+         ) WITHOUT ROWID;",
+    )
+}
+
+fn import_json_cache(
+    db: &mut Connection,
+    data_dir: &std::path::Path,
+    config: &TitleDbConfig,
+) -> Result<(), TitleDbError> {
+    let cache_dir = data_dir.join("titledb");
+    let titles_path = cache_dir.join(format!("titles.{}.{}.json", config.region, config.language));
+    if titles_path.exists() {
+        let titles = load_cache(&titles_path)?;
+        replace_titles(db, &titles)?;
+    }
+    let artifacts = load_artifact_cache(&cache_dir)?;
+    if !artifacts.is_empty() {
+        replace_artifacts(db, &artifacts)?;
+    }
+    Ok(())
+}
+
+fn database_matches_config(db: &Connection, config: &TitleDbConfig) -> bool {
+    let value = |key: &str| {
+        db.query_row("SELECT value FROM metadata WHERE key = ?1", [key], |row| {
+            row.get::<_, String>(0)
+        })
+        .optional()
+        .ok()
+        .flatten()
+    };
+    title_count(db) > 0
+        && value("region").as_deref() == Some(config.region.as_str())
+        && value("language").as_deref() == Some(config.language.as_str())
+}
+
+fn set_database_config(db: &Connection, config: &TitleDbConfig) -> Result<(), TitleDbError> {
+    db.execute(
+        "INSERT OR REPLACE INTO metadata (key, value) VALUES ('region', ?1)",
+        [&config.region],
+    )?;
+    db.execute(
+        "INSERT OR REPLACE INTO metadata (key, value) VALUES ('language', ?1)",
+        [&config.language],
+    )?;
+    Ok(())
+}
+
+fn clear_database(db: &mut Connection) -> Result<(), TitleDbError> {
+    let transaction = db.transaction()?;
+    transaction.execute_batch(
+        "DELETE FROM titles; DELETE FROM versions; DELETE FROM cnmts; DELETE FROM languages; \
+         DELETE FROM regions; DELETE FROM metadata;",
+    )?;
+    transaction.commit()?;
+    Ok(())
+}
+
+fn replace_titles(
+    db: &mut Connection,
+    titles: &HashMap<String, TitleInfo>,
+) -> Result<(), TitleDbError> {
+    let transaction = db.transaction()?;
+    transaction.execute("DELETE FROM titles", [])?;
+    {
+        let mut insert = transaction.prepare(
+            "INSERT INTO titles (id, icon_url, banner_url, name) VALUES (?1, ?2, ?3, ?4)",
+        )?;
+        for (id, info) in titles {
+            insert.execute(params![id, info.icon_url, info.banner_url, info.name])?;
+        }
+    }
+    transaction.commit()?;
+    Ok(())
+}
+
+fn replace_artifacts(
+    db: &mut Connection,
+    artifacts: &TitleDbArtifacts,
+) -> Result<(), TitleDbError> {
+    let transaction = db.transaction()?;
+    transaction.execute_batch(
+        "DELETE FROM versions; DELETE FROM cnmts; DELETE FROM languages; DELETE FROM regions;",
+    )?;
+    {
+        let mut insert = transaction.prepare(
+            "INSERT INTO versions (title_id, latest_version, versions) VALUES (?1, ?2, ?3)",
+        )?;
+        for info in artifacts.versions.values() {
+            insert.execute(params![
+                info.title_id,
+                info.latest_version.and_then(|value| i64::try_from(value).ok()),
+                serde_json::to_string(&info.versions)?
+            ])?;
+        }
+    }
+    {
+        let mut insert = transaction.prepare(
+            "INSERT INTO cnmts (app_id, title_id, title_type, base_title_id, version, \
+             required_system_version) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        )?;
+        for (app_id, entries) in &artifacts.cnmts {
+            for info in entries {
+                insert.execute(params![
+                    app_id,
+                    info.title_id,
+                    info.title_type,
+                    info.base_title_id,
+                    info.version.and_then(|value| i64::try_from(value).ok()),
+                    info.required_system_version.and_then(|value| i64::try_from(value).ok())
+                ])?;
+            }
+        }
+    }
+    {
+        let mut insert =
+            transaction.prepare("INSERT INTO languages (title_id, languages) VALUES (?1, ?2)")?;
+        for info in artifacts.languages.values() {
+            insert.execute(params![info.title_id, serde_json::to_string(&info.languages)?])?;
+        }
+    }
+    {
+        let mut insert =
+            transaction.prepare("INSERT INTO regions (region, languages) VALUES (?1, ?2)")?;
+        for (region, languages) in &artifacts.regions {
+            insert.execute(params![region, serde_json::to_string(languages)?])?;
+        }
+    }
+    transaction.commit()?;
+    Ok(())
+}
+
+fn title_count(db: &Connection) -> usize {
+    db.query_row("SELECT COUNT(*) FROM titles", [], |row| row.get::<_, i64>(0))
+        .ok()
+        .and_then(|count| usize::try_from(count).ok())
+        .unwrap_or(0)
+}
+
+fn cnmt_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<TitleCnmtInfo> {
+    let version: Option<i64> = row.get(3)?;
+    let required_system_version: Option<i64> = row.get(4)?;
+    Ok(TitleCnmtInfo {
+        title_id: row.get(0)?,
+        title_type: row.get(1)?,
+        base_title_id: row.get(2)?,
+        version: version.and_then(|value| u64::try_from(value).ok()),
+        required_system_version: required_system_version
+            .and_then(|value| u64::try_from(value).ok()),
+    })
+}
+
 fn load_cache(path: &std::path::Path) -> Result<HashMap<String, TitleInfo>, TitleDbError> {
     let buf = std::fs::read_to_string(path)?;
     let raw: serde_json::Value = serde_json::from_str(&buf)?;
@@ -1197,29 +1456,6 @@ fn load_cache(path: &std::path::Path) -> Result<HashMap<String, TitleInfo>, Titl
         map.insert(id, TitleInfo { icon_url, banner_url, name });
     }
     Ok(map)
-}
-
-fn save_cache(
-    path: &std::path::Path,
-    map: &HashMap<String, TitleInfo>,
-) -> Result<(), TitleDbError> {
-    let object: serde_json::Map<String, serde_json::Value> = map
-        .iter()
-        .map(|(id, info)| {
-            (
-                id.clone(),
-                serde_json::json!({
-                    "id": id,
-                    "iconUrl": info.icon_url,
-                    "bannerUrl": info.banner_url,
-                    "name": info.name,
-                    "category": "",
-                }),
-            )
-        })
-        .collect();
-    atomic_write(path, serde_json::to_string_pretty(&object)?.as_bytes())?;
-    Ok(())
 }
 
 fn load_artifact_cache(cache_dir: &std::path::Path) -> Result<TitleDbArtifacts, TitleDbError> {
@@ -1266,83 +1502,6 @@ fn load_optional_artifact_txt(
     std::fs::read_to_string(path).map_or_else(|_| HashMap::new(), |buf| parse_versions_txt(&buf))
 }
 
-fn save_artifact_cache(
-    cache_dir: &std::path::Path,
-    artifacts: &TitleDbArtifacts,
-) -> Result<(), TitleDbError> {
-    std::fs::create_dir_all(cache_dir)?;
-    write_json_artifact(
-        &cache_dir.join("versions.json"),
-        artifacts.versions.values().map(|info| {
-            serde_json::json!({
-                "id": info.title_id,
-                "latest_version": info.latest_version,
-                "versions": info.versions,
-            })
-        }),
-    )?;
-    let mut cnmts = serde_json::Map::new();
-    for (app_id, versions) in &artifacts.cnmts {
-        let mut version_map = serde_json::Map::new();
-        for info in versions {
-            let title_type = info.title_type.as_deref().map(|kind| match kind {
-                "BASE" => 128,
-                "UPDATE" => 129,
-                "DLC" => 130,
-                _ => 0,
-            });
-            version_map.insert(
-                info.version.unwrap_or(0).to_string(),
-                serde_json::json!({
-                    "titleType": title_type,
-                    "otherApplicationId": info.base_title_id,
-                    "requiredSystemVersion": info.required_system_version,
-                }),
-            );
-        }
-        cnmts.insert(app_id.to_ascii_lowercase(), serde_json::Value::Object(version_map));
-    }
-    atomic_write(&cache_dir.join("cnmts.json"), serde_json::to_string_pretty(&cnmts)?.as_bytes())?;
-    if artifacts.regions.is_empty() {
-        write_json_artifact(
-            &cache_dir.join("languages.json"),
-            artifacts.languages.values().map(|info| {
-                serde_json::json!({
-                    "id": info.title_id,
-                    "languages": info.languages,
-                })
-            }),
-        )?;
-    } else {
-        atomic_write(
-            &cache_dir.join("languages.json"),
-            serde_json::to_string_pretty(&artifacts.regions)?.as_bytes(),
-        )?;
-    }
-    Ok(())
-}
-
-fn write_json_artifact(
-    path: &std::path::Path,
-    values: impl IntoIterator<Item = serde_json::Value>,
-) -> Result<(), TitleDbError> {
-    let mut values: Vec<_> = values.into_iter().collect();
-    values.sort_by(|a, b| {
-        let a = a.get("id").and_then(|v| v.as_str()).unwrap_or_default();
-        let b = b.get("id").and_then(|v| v.as_str()).unwrap_or_default();
-        a.cmp(b)
-    });
-    let buf = serde_json::to_string_pretty(&values)?;
-    atomic_write(path, buf.as_bytes())?;
-    Ok(())
-}
-
-fn atomic_write(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
-    let temp = path.with_extension("json.tmp");
-    std::fs::write(&temp, bytes)?;
-    std::fs::rename(temp, path)
-}
-
 #[derive(Debug, thiserror::Error)]
 pub enum TitleDbError {
     #[error("HTTP error: {0}")]
@@ -1355,6 +1514,8 @@ pub enum TitleDbError {
     Utf8(#[from] std::string::FromUtf8Error),
     #[error("ZIP error: {0}")]
     Zip(#[from] zip::result::ZipError),
+    #[error("SQLite error: {0}")]
+    Sqlite(#[from] rusqlite::Error),
     #[error("remote ZIP server does not support byte ranges")]
     RangeUnsupported,
     #[error("TitleDB background task failed")]
@@ -1471,6 +1632,62 @@ mod tests {
         assert_eq!(
             titledb.languages("0100000000010000").await.expect("languages").languages,
             vec!["en".to_string(), "it".to_string()]
+        );
+    }
+
+    #[tokio::test]
+    async fn sqlite_cache_is_disabled_imported_once_and_region_scoped() {
+        let dir = tempfile::tempdir().expect("temp directory");
+        let cache_dir = dir.path().join("titledb");
+        std::fs::create_dir_all(&cache_dir).expect("cache directory");
+        std::fs::write(
+            cache_dir.join("titles.US.en.json"),
+            r#"{"0100000000010000":{"id":"0100000000010000","name":"US title","iconUrl":"https://example.test/us.jpg"}}"#,
+        )
+        .expect("US fixture");
+
+        let disabled = TitleDb::with_progress(
+            TitleDbConfig { enabled: false, ..TitleDbConfig::default() },
+            dir.path().to_path_buf(),
+            None,
+        );
+        assert_eq!(disabled.entry_count().await, 0);
+        drop(disabled);
+
+        let enabled =
+            TitleDb::with_progress(TitleDbConfig::default(), dir.path().to_path_buf(), None);
+        assert_eq!(enabled.entry_count().await, 1);
+        assert_eq!(
+            enabled.lookup("0100000000010000").await.and_then(|info| info.name),
+            Some("US title".to_string())
+        );
+        drop(enabled);
+        std::fs::remove_file(cache_dir.join("titles.US.en.json")).expect("remove legacy cache");
+
+        let reopened =
+            TitleDb::with_progress(TitleDbConfig::default(), dir.path().to_path_buf(), None);
+        assert_eq!(reopened.entry_count().await, 1);
+        drop(reopened);
+
+        std::fs::write(
+            cache_dir.join("titles.EU.fr.json"),
+            r#"{"0100000000020000":{"id":"0100000000020000","name":"EU title"}}"#,
+        )
+        .expect("EU fixture");
+        let european = TitleDb::with_progress(
+            TitleDbConfig {
+                region: "EU".to_string(),
+                language: "fr".to_string(),
+                ..TitleDbConfig::default()
+            },
+            dir.path().to_path_buf(),
+            None,
+        );
+        assert_eq!(european.entry_count().await, 1);
+        assert!(european.lookup("0100000000010000").await.is_none());
+        assert_eq!(
+            european.lookup("0100000000020000").await.and_then(|info| info.name),
+            Some("EU title".to_string())
         );
     }
 }

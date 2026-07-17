@@ -264,8 +264,11 @@ fn init_logging() {
 fn spawn_titledb_refresh(titledb: TitleDb, interval_str: &str) {
     let interval = humantime::parse_duration(interval_str).unwrap_or(Duration::from_secs(86400));
     tokio::spawn(async move {
-        titledb.refresh();
+        if titledb.entry_count().await == 0 {
+            titledb.refresh();
+        }
         let mut ticker = tokio::time::interval(interval);
+        ticker.tick().await;
         loop {
             ticker.tick().await;
             titledb.refresh();
