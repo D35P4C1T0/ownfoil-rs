@@ -1,34 +1,30 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>ownfoil-rs — Login</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@knadh/oat@0.3.0/oat.min.css">
+  <!--theme-->
 </head>
-<body data-theme="dark">
-  <main class="container" style="max-width: 24rem; margin: 4rem auto; padding: 2rem;">
-    <h1>ownfoil-rs</h1>
-    <p>Admin login</p>
-    <div id="error-msg" role="alert" data-variant="danger" style="display: none; margin-bottom: 1rem;">
-      Invalid username or password.
+<body>
+  <main class="shell narrow">
+    <div class="login-tools">
+      <label class="sr-only" for="theme">Color theme</label>
+      <select id="theme" class="theme" data-theme-picker><option value="dark">Black</option><option value="light">Light</option><option value="ownfoil">Ownfoil</option></select>
     </div>
-    <form method="post" action="/admin/login" class="card" style="padding: 1.5rem;">
-      <fieldset>
-        <label for="username">Username</label>
-        <input type="text" id="username" name="username" required autocomplete="username">
-      </fieldset>
-      <fieldset>
-        <label for="password">Password</label>
-        <input type="password" id="password" name="password" required autocomplete="current-password">
-      </fieldset>
-      <button type="submit" data-variant="primary">Sign in</button>
+    <header class="login-head">
+      <h1>ownfoil-rs</h1>
+      <p class="muted">Admin login</p>
+    </header>
+    <div id="error-msg" class="notice error" role="alert" hidden>Invalid username or password.</div>
+    <form method="post" action="/admin/login" class="panel login">
+      <fieldset><label for="username">Username</label><input type="text" id="username" name="username" required autocomplete="username" autofocus></fieldset>
+      <fieldset><label for="password">Password</label><input type="password" id="password" name="password" required autocomplete="current-password"></fieldset>
+      <button type="submit">Sign in</button>
     </form>
   </main>
   <script>
-    if (new URLSearchParams(location.search).get('error') === '1') {
-      document.getElementById('error-msg').style.display = 'block';
-    }
+    if(new URLSearchParams(location.search).get('error')==='1')document.querySelector('#error-msg').hidden=false;
   </script>
 </body>
 </html>

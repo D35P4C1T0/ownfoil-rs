@@ -1,5 +1,27 @@
 <!doctype html>
-<html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Profile</title></head>
-<body><nav><a href="/">Library</a> · <a href="/settings">Settings</a> · <a href="/logout">Logout</a></nav><h1>Profile</h1><p>Backup access enabled. Save-backup workflows are not available in pinned upstream Ownfoil.</p></body>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>ownfoil-rs — Profile</title>
+  <!--theme-->
+</head>
+<body>
+  <main class="shell">
+    <header class="header">
+      <div><h1>Profile</h1><p>Account capabilities and access.</p></div>
+      <nav class="nav" aria-label="Main navigation">
+        <label class="sr-only" for="theme">Color theme</label>
+        <select id="theme" class="theme" data-theme-picker><option value="dark">Black</option><option value="light">Light</option><option value="ownfoil">Ownfoil</option></select>
+        <a class="secondary" href="/admin">Library</a>
+        <a class="secondary" href="/admin/settings">Settings</a>
+        <a class="secondary" href="/admin/logout">Logout</a>
+      </nav>
+    </header>
+    <section class="panel">
+      <h2>Backup access</h2>
+      <p>Backup access is enabled. Save-backup workflows are not available in the pinned upstream Ownfoil release.</p>
+    </section>
+  </main>
+</body>
 </html>

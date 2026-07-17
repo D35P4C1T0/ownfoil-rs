@@ -144,6 +144,44 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn html_pages_inline_the_shared_theme() -> Result<()> {
+        let state = test_app_state(
+            Catalog::from_files(Vec::new()),
+            std::env::temp_dir(),
+            AuthSettings::from_users(Vec::new()),
+            SessionStore::new(24),
+        );
+        let server = TestServer::new(router(state))?;
+
+        for path in ["/admin", "/admin/settings", "/setup", "/profile", "/admin/login"] {
+            let page = server.get(path).await;
+            assert_eq!(page.status_code(), StatusCode::OK, "{path}");
+            let html = page.text();
+            assert!(html.contains("[data-theme=ownfoil]"), "{path}");
+            assert!(html.contains("ownfoil-theme"), "{path}");
+            assert!(html.contains("data-theme-picker"), "{path}");
+            assert!(!html.contains("<!--theme-->"), "{path}");
+            assert!(!html.contains("/assets/ownfoil"), "{path}");
+        }
+
+        let admin = server.get("/admin").await.text();
+        assert!(admin.contains("rel=\"preload\""));
+        assert!(admin.contains("fetchpriority=\"high\""));
+        assert!(admin.contains("name=\"description\""));
+        assert!(admin.contains("IntersectionObserver"));
+        assert!(!admin.contains("<h3"));
+
+        let compressed = server.get("/admin").add_header("Accept-Encoding", "gzip").await;
+        assert_eq!(compressed.header("content-encoding"), "gzip");
+
+        let robots = server.get("/robots.txt").await;
+        assert_eq!(robots.status_code(), StatusCode::OK);
+        assert_eq!(robots.text(), "User-agent: *\nDisallow:\n");
+        assert_eq!(server.get("/favicon.ico").await.status_code(), StatusCode::NO_CONTENT);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn download_supports_range() -> Result<()> {
         let dir = tempdir()?;
         let file_path = dir.path().join("demo.nsp");

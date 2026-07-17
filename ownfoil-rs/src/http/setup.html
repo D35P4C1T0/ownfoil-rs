@@ -1,32 +1,54 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Ownfoil Setup</title>
-  <style>
-    body{font:16px system-ui;max-width:900px;margin:2rem auto;padding:0 1rem;background:#111827;color:#f9fafb}
-    nav a,a{color:#93c5fd} section{background:#1f2937;padding:1rem 1.5rem;margin:1rem 0;border-radius:.6rem}
-    code{background:#0f172a;padding:.15rem .35rem;border-radius:.25rem}.disabled{opacity:.55}
-  </style>
+  <title>ownfoil-rs — Client setup</title>
+  <!--theme-->
 </head>
 <body>
-<nav><a href="/">Library</a> · <a href="/settings">Settings</a> · <a href="/logout">Logout</a></nav>
-<h1>Client setup</h1>
-<p>Use this server address in supported clients. Add <code>/base</code>, <code>/update</code>,
-<code>/dlc</code>, or <code>/multi</code> to filter content.</p>
-<div id="clients"></div>
-<script>
-fetch('/api/setup').then(r=>r.json()).then(settings=>{
-  const root=document.querySelector('#clients');
-  const address=settings.host?`https://${settings.host}`:location.origin;
-  for(const [name,enabled] of Object.entries(settings.clients)){
-    const section=document.createElement('section');
-    if(!enabled)section.className='disabled';
-    section.innerHTML=`<h2>${name}</h2><p>${enabled?'Enabled':'Disabled'}</p><p>URL: <code>${address}</code></p>`;
-    root.append(section);
-  }
-});
-</script>
+  <main class="shell">
+    <header class="header">
+      <div><h1>Client setup</h1><p>Connection details for supported clients.</p></div>
+      <nav class="nav" aria-label="Main navigation">
+        <label class="sr-only" for="theme">Color theme</label>
+        <select id="theme" class="theme" data-theme-picker><option value="dark">Black</option><option value="light">Light</option><option value="ownfoil">Ownfoil</option></select>
+        <a class="secondary" href="/admin">Library</a>
+        <a class="secondary" href="/admin/settings">Settings</a>
+        <a class="secondary" href="/admin/logout">Logout</a>
+      </nav>
+    </header>
+    <section class="panel">
+      <p>Use these addresses in your client. Add <code>/base</code>, <code>/update</code>, <code>/dlc</code>, or <code>/multi</code> to filter content.</p>
+    </section>
+    <div id="clients" class="client-grid" aria-live="polite"><p class="loading">Loading client settings…</p></div>
+    <div id="setup-error" class="notice error" role="alert" hidden>Couldn’t load client settings. Try refreshing the page.</div>
+  </main>
+  <script>
+    fetch('/api/setup').then(r=>{if(!r.ok)throw new Error(r.status);return r.json()}).then(settings=>{
+      const root=document.querySelector('#clients');
+      root.textContent='';
+      let address=settings.host?`https://${settings.host}`:location.origin;
+      const loopback=location.hostname==='localhost'||location.hostname==='::1'||/^127(?:\.\d{1,3}){3}$/.test(location.hostname);
+      if(!settings.host&&loopback&&settings.external_ip){
+        const external=new URL(location.origin);
+        external.hostname=settings.external_ip;
+        address=external.origin;
+      }
+      for(const [name,enabled] of Object.entries(settings.clients)){
+        const section=document.createElement('section');
+        section.className=`panel client${enabled?'':' disabled'}`;
+        const title=document.createElement('h2');
+        const status=document.createElement('p');
+        const url=document.createElement('code');
+        title.textContent=name;
+        status.className='muted';
+        status.textContent=enabled?'Enabled':'Disabled';
+        url.textContent=address;
+        section.append(title,status,url);
+        root.append(section);
+      }
+    }).catch(()=>document.querySelector('#setup-error').hidden=false);
+  </script>
 </body>
 </html>
