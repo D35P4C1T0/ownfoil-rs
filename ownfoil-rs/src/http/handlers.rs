@@ -1,7 +1,6 @@
 use std::convert::Infallible;
 use std::hash::{Hash, Hasher};
-use std::net::IpAddr;
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
@@ -21,6 +20,7 @@ use tower_governor::{
     GovernorLayer, errors::GovernorError, governor::GovernorConfigBuilder,
     key_extractor::KeyExtractor,
 };
+use tower_http::compression::CompressionLayer;
 use tracing::{debug, warn};
 
 use crate::catalog::{ContentKind, TitleVersions};
@@ -41,6 +41,24 @@ use super::error::ApiError;
 const SESSION_COOKIE: &str = "ownfoil_session";
 static DOWNLOAD_THROTTLE: LazyLock<dashmap::DashMap<(usize, IpAddr), std::time::Instant>> =
     LazyLock::new(dashmap::DashMap::new);
+static THEME_HEAD: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "<style>{}</style><script>{}</script>",
+        include_str!("theme.css"),
+        include_str!("theme.js")
+    )
+});
+static OUTWARD_FACING_IPV4: LazyLock<Option<Ipv4Addr>> = LazyLock::new(|| {
+    // Connecting a UDP socket selects the interface used by the default route
+    // without sending any traffic. If there is no external route, keep the
+    // loopback URL instead of advertising an unusable address.
+    let socket = UdpSocket::bind((Ipv4Addr::UNSPECIFIED, 0)).ok()?;
+    socket.connect((Ipv4Addr::new(192, 0, 2, 1), 80)).ok()?;
+    match socket.local_addr().ok()?.ip() {
+        IpAddr::V4(ip) if !ip.is_loopback() && !ip.is_unspecified() => Some(ip),
+        _ => None,
+    }
+});
 
 /// Extracts peer address from request extensions when available (e.g. from
 /// `into_make_service_with_connect_info`). Returns `None` in tests or when
@@ -119,6 +137,8 @@ pub fn router(state: AppState) -> Router {
     let app = Router::new()
         .route("/", get(shop_root))
         .route("/health", get(health))
+        .route("/favicon.ico", get(favicon))
+        .route("/robots.txt", get(robots))
         .route("/api/catalog", get(catalog_all))
         .route("/api/sections", get(sections))
         .route("/api/sections/{section}", get(section_entries))
@@ -178,6 +198,7 @@ pub fn router(state: AppState) -> Router {
             axum::http::header::HeaderName::from_static("x-request-id"),
         ))
         .layer(tower_http::trace::TraceLayer::new_for_http())
+        .layer(CompressionLayer::new())
         .with_state(state);
 
     if let Some(governor_conf) = governor_conf {
@@ -190,6 +211,38 @@ pub fn router(state: AppState) -> Router {
 async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
     let catalog_files = state.catalog.read().await.files().len();
     Json(HealthResponse { status: "ok", catalog_files: Some(catalog_files) })
+}
+
+fn html_page(template: &str) -> Response {
+    Html(template.replace("<!--theme-->", THEME_HEAD.as_str())).into_response()
+}
+
+async fn admin_page(state: &AppState) -> Response {
+    let files = state.catalog.read().await.files().to_vec();
+    let payload = build_shop_sections_payload(&files, 1, &state.titledb).await;
+    let icon = payload
+        .sections
+        .first()
+        .and_then(|section| section.items.first())
+        .map(|item| item.icon_url.as_str())
+        .filter(|url| url.starts_with("https://") || url.starts_with('/'))
+        .map_or_else(String::new, |url| {
+            let url = url.replace('&', "&amp;").replace('"', "&quot;");
+            format!(r#"<link rel="preload" href="{url}" as="image" fetchpriority="high">"#)
+        });
+    html_page(&include_str!("admin.html").replace("<!--lcp-->", &icon))
+}
+
+async fn favicon() -> axum::http::StatusCode {
+    axum::http::StatusCode::NO_CONTENT
+}
+
+async fn robots() -> Response {
+    (
+        [(axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+        "User-agent: *\nDisallow:\n",
+    )
+        .into_response()
 }
 
 fn session_token(jar: &CookieJar) -> Option<&str> {
@@ -231,7 +284,7 @@ async fn shop_root(
         if state.auth.is_enabled() && !public && !session_has_access(&state, &jar, Access::Shop) {
             return Ok(Redirect::to("/login").into_response());
         }
-        return Ok(Html(include_str!("admin.html")).into_response());
+        return Ok(admin_page(&state).await);
     }
 
     if client != ClientKind::Browser && !client_enabled(&state, client).await {
@@ -523,6 +576,7 @@ async fn setup_info(
     drop(settings);
     Ok(Json(serde_json::json!({
         "host": host,
+        "external_ip": *OUTWARD_FACING_IPV4,
         "public": public,
         "clients": {
             "tinfoil": tinfoil,
@@ -821,7 +875,7 @@ async fn login_page(State(state): State<AppState>, jar: CookieJar) -> Result<Res
     if jar.get(SESSION_COOKIE).and_then(|c| state.sessions.get(c.value())).is_some() {
         return Ok(Redirect::to("/admin").into_response());
     }
-    Ok(Html(include_str!("login.html")).into_response())
+    Ok(html_page(include_str!("login.html")))
 }
 
 async fn login_post(
@@ -869,7 +923,7 @@ async fn admin_ui(State(state): State<AppState>, jar: CookieJar) -> Result<Respo
     if state.auth.is_enabled() && !session_has_access(&state, &jar, Access::Admin) {
         return Ok(Redirect::to("/admin/login").into_response());
     }
-    Ok(Html(include_str!("admin.html")).into_response())
+    Ok(admin_page(&state).await)
 }
 
 async fn logout(
@@ -886,7 +940,7 @@ async fn settings_ui(State(state): State<AppState>, jar: CookieJar) -> Result<Re
     if state.auth.is_enabled() && !session_has_access(&state, &jar, Access::Admin) {
         return Ok(Redirect::to("/admin/login").into_response());
     }
-    Ok(Html(include_str!("settings.html")).into_response())
+    Ok(html_page(include_str!("settings.html")))
 }
 
 async fn setup_page(State(state): State<AppState>, jar: CookieJar) -> Result<Response, ApiError> {
@@ -894,14 +948,14 @@ async fn setup_page(State(state): State<AppState>, jar: CookieJar) -> Result<Res
     if state.auth.is_enabled() && !public && !session_has_access(&state, &jar, Access::Shop) {
         return Ok(Redirect::to("/login").into_response());
     }
-    Ok(Html(include_str!("setup.html")).into_response())
+    Ok(html_page(include_str!("setup.html")))
 }
 
 async fn profile_page(State(state): State<AppState>, jar: CookieJar) -> Result<Response, ApiError> {
     if state.auth.is_enabled() && !session_has_access(&state, &jar, Access::Backup) {
         return Ok(Redirect::to("/login").into_response());
     }
-    Ok(Html(include_str!("profile.html")).into_response())
+    Ok(html_page(include_str!("profile.html")))
 }
 
 #[derive(serde::Deserialize)]

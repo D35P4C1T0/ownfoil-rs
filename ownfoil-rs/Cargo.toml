@@ -38,7 +38,7 @@ futures-util = "0.3"
 hex = "0.4"
 toml = "0.8"
 tower_governor = { version = "0.8", features = ["axum"] }
-tower-http = { version = "0.6", features = ["trace", "request-id"] }
+tower-http = { version = "0.6", features = ["compression-gzip", "trace", "request-id"] }
 walkdir = "2.5"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
