@@ -57,3 +57,27 @@ Executed successfully during this update:
 XCI/XCZ coverage is synthetic. No browser automation connection or running Docker
 daemon was available for visual interaction or image-build checks. See
 [PARITY_NOTES.md](PARITY_NOTES.md) for implementation differences still outstanding.
+
+## September 2026 follow-up
+
+The retained partial changes were compared with the pinned upstream `app/tasks.py`,
+`app/gql/resolvers.py`, and `app/containers/verification.py`. Added regression
+coverage includes scoped file/task lifecycle, nested cancellation, active child
+history retention, grouped GraphQL filters and independent roles, malformed NCZ
+blocks, decryption probes, streaming hash cancellation, and signature-only
+rechecks preserving existing hash verdicts.
+
+Validation commands remain those above. An ARMv6 release build also succeeded for
+`arm-unknown-linux-musleabihf` using the installed Rust target, Zig as the C
+compiler, and Rust's `rust-lld` linker. `file` and `readelf` identify the result as
+an ELF32 ARM EABI5, hard-float, statically linked executable:
+`target/arm-unknown-linux-musleabihf/release/ownfoil-rs`.
+
+No ARM hardware or user-mode ARM emulator was available, so this is build
+validation, not an ARM runtime test. Docker's socket was absent even outside the
+sandbox; image startup was not retested. No browser automation tool was available.
+The default suite passed 117 unit/integration tests and 8 route-contract tests
+(3 optional tests ignored). The optional `reference_zstd_interoperability` test
+was then run separately and passed. Content/key fixture tests remain unrun.
+Formatting, strict Clippy, and `git diff --check` also passed.
+See [ARM deployment](../docs/ARM.md) for board-side startup and smoke checks.

@@ -814,13 +814,13 @@ async fn increment_download_throttled(state: &AppState, id: usize, peer: Option<
         let now = std::time::Instant::now();
         if DOWNLOAD_THROTTLE
             .get(&key)
-            .is_some_and(|last| now.duration_since(*last) < Duration::from_secs(60))
+            .is_some_and(|last| now.duration_since(*last) < Duration::from_mins(1))
         {
             return;
         }
         DOWNLOAD_THROTTLE.insert(key, now);
         DOWNLOAD_THROTTLE
-            .retain(|_, instant| now.duration_since(*instant) < Duration::from_secs(60));
+            .retain(|_, instant| now.duration_since(*instant) < Duration::from_mins(1));
     }
     if let Some(storage) = &state.storage {
         let _ = storage.increment_file_download_count(i64::try_from(id).unwrap_or(i64::MAX)).await;
@@ -874,15 +874,50 @@ async fn saves_list(
 
 #[derive(serde::Deserialize)]
 struct LoginForm {
+    #[serde(alias = "user")]
     username: String,
     password: String,
+    next: Option<String>,
+    remember: Option<String>,
 }
 
-async fn login_page(State(state): State<AppState>, jar: CookieJar) -> Result<Response, ApiError> {
-    if jar.get(SESSION_COOKIE).and_then(|c| state.sessions.get(c.value())).is_some() {
-        return Ok(Redirect::to("/admin").into_response());
+#[derive(serde::Deserialize)]
+struct LoginQuery {
+    next: Option<String>,
+}
+
+fn local_next(next: Option<&str>) -> Option<&str> {
+    let next = next?;
+    let decoded = percent_decode_str(next).decode_utf8().ok()?;
+    if [next, decoded.as_ref()].iter().any(|value| {
+        !value.starts_with('/')
+            || value.starts_with("//")
+            || value.chars().any(|c| c.is_control() || c.is_whitespace() || c == '\\')
+    }) || decoded.contains('%')
+        || next.parse::<axum::http::Uri>().is_err()
+    {
+        return None;
     }
-    Ok(html_page(include_str!("login.html")))
+    Some(next)
+}
+
+async fn login_page(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    Query(query): Query<LoginQuery>,
+) -> Result<Response, ApiError> {
+    let next = local_next(query.next.as_deref());
+    if jar.get(SESSION_COOKIE).and_then(|c| state.sessions.get(c.value())).is_some() {
+        return Ok(Redirect::to(next.unwrap_or("/admin")).into_response());
+    }
+    let template = include_str!("login.html").replace(
+        "</form>",
+        &format!(
+            "<input type=\"hidden\" name=\"next\" value=\"{}\"></form>",
+            html_escape(next.unwrap_or_default())
+        ),
+    );
+    Ok(html_page(&template))
 }
 
 async fn login_post(
@@ -904,15 +939,17 @@ async fn login_post(
             "/setup"
         }
     });
+    let redirect = local_next(form.next.as_deref()).unwrap_or(redirect);
     let token = state.sessions.create(form.username);
-    let cookie = Cookie::build((SESSION_COOKIE, token))
+    let mut cookie = Cookie::build((SESSION_COOKIE, token))
         .path("/")
         .http_only(true)
         .secure(!state.insecure_admin_cookie)
-        .same_site(cookie::SameSite::Lax)
-        .max_age(cookie::time::Duration::hours(24))
-        .build();
-    Ok((jar.add(cookie), Redirect::to(redirect)))
+        .same_site(cookie::SameSite::Lax);
+    if form.remember.as_deref().is_some_and(|value| !value.is_empty()) {
+        cookie = cookie.max_age(cookie::time::Duration::hours(24));
+    }
+    Ok((jar.add(cookie.build()), Redirect::to(redirect)))
 }
 
 fn session_has_access(state: &AppState, jar: &CookieJar, access: Access) -> bool {
@@ -1043,27 +1080,58 @@ async fn settings_shop_post(
     State(state): State<AppState>,
     jar: CookieJar,
     headers: HeaderMap,
-    Json(mut body): Json<ShopSettings>,
+    Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     ensure_access(&state, &headers, session_token(&jar), Access::Admin).await?;
     ensure_same_origin(&headers)?;
-    if let Some((_, host)) = body.host.split_once("://") {
-        body.host = host.to_string();
+    let mut settings = state.settings.write().await;
+    let mut value = serde_json::to_value(&settings.shop).map_err(|_| ApiError::Internal)?;
+    let merged = merge_shop_patch(&mut value, &body)
+        .map_err(str::to_string)
+        .and_then(|()| serde_json::from_value::<ShopSettings>(value).map_err(|e| e.to_string()));
+    let mut candidate = settings.clone();
+    candidate.shop = match merged {
+        Ok(shop) => shop,
+        Err(error) => {
+            return Ok(Json(serde_json::json!({
+                "success": false, "errors": [{"path": "shop", "error": error}]
+            })));
+        }
+    };
+    if let Some((_, host)) = candidate.shop.host.split_once("://") {
+        candidate.shop.host = host.to_string();
     }
-    {
-        let mut settings = state.settings.write().await;
-        settings.shop = body.clone();
-        settings.save(&state.settings_path).map_err(|error| {
-            warn!(error = %error, "failed to save shop settings");
-            ApiError::Internal
-        })?;
-    }
-    {
-        let mut shop = state.shop.write().await;
-        shop.motd = body.motd;
-        shop.encrypt = body.clients.tinfoil.encrypt;
-    }
+    candidate.save(&state.settings_path).map_err(|error| {
+        warn!(error = %error, "failed to save shop settings");
+        ApiError::Internal
+    })?;
+    let mut shop = state.shop.write().await;
+    shop.motd.clone_from(&candidate.shop.motd);
+    shop.encrypt = candidate.shop.clients.tinfoil.encrypt;
+    *settings = candidate;
+    drop(shop);
+    drop(settings);
     Ok(Json(serde_json::json!({ "success": true, "errors": [] })))
+}
+
+fn merge_shop_patch(
+    target: &mut serde_json::Value,
+    patch: &serde_json::Value,
+) -> Result<(), &'static str> {
+    if let Some(target) = target.as_object_mut() {
+        let patch = patch.as_object().ok_or("Expected a shop settings object")?;
+        for (key, value) in patch {
+            if matches!(key.as_str(), "hauth" | "clientCertKey") {
+                continue;
+            }
+            if let Some(target) = target.get_mut(key) {
+                merge_shop_patch(target, value)?;
+            }
+        }
+    } else {
+        target.clone_from(patch);
+    }
+    Ok(())
 }
 
 async fn settings_library_paths_get(

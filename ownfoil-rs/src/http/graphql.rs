@@ -27,6 +27,7 @@ use std::sync::LazyLock;
 struct Context {
     state: AppState,
     data: GraphData,
+    can_shop: bool,
 }
 static SCHEMA: LazyLock<Schema> = LazyLock::new(|| {
     build_schema().unwrap_or_else(|error| panic!("Invalid GraphQL contract: {error}"))
@@ -118,7 +119,7 @@ fn build_schema() -> anyhow::Result<Schema> {
                             let value = resolve(context, &owner, &property, &parent, &args)
                                 .await
                                 .map_err(|e| async_graphql::Error::new(e.to_string()))?;
-                            Ok(Some(convert(value, &field_type)))
+                            Ok((!value.is_null()).then(|| convert(value, &field_type)))
                         })
                     });
                     if let Some(args) = definition["args"].as_array() {
@@ -168,6 +169,18 @@ async fn resolve(
         return mutate(ctx, field, args).await;
     }
     if owner == "Query" {
+        if !ctx.can_shop {
+            match field {
+                "titles" | "apps" => return Ok(json!({"total":0,"items":[]})),
+                "title" | "app" => return Ok(Value::Null),
+                "stats" => {
+                    let mut stats = GraphData::default().stats();
+                    stats["appsByType"] = Value::Null;
+                    return Ok(stats);
+                }
+                _ => {}
+            }
+        }
         return Ok(match field {
             "titles" => select(data.titles.clone(), args, "Title", data, true),
             "apps" => select(data.apps.clone(), args, "App", data, true),
@@ -196,14 +209,16 @@ async fn resolve(
             "libraries" => json!(if data.can_admin { data.libraries.clone() } else { Vec::new() }),
             "workers" => json!(if data.can_admin { data.workers.clone() } else { Vec::new() }),
             "tasks" => {
+                if !data.can_admin {
+                    return Ok(json!([]));
+                }
                 if let Some(name) = args["taskName"].as_str() {
                     ensure!(crate::tasks::NAMES.contains(&name), "Unknown task: {name}");
                 }
                 json!(
                     data.tasks
                         .iter()
-                        .filter(|t| data.can_admin
-                            && (args["status"].is_null() || t["status"] == args["status"])
+                        .filter(|t| (args["status"].is_null() || t["status"] == args["status"])
                             && (args["taskName"].is_null() || t["taskName"] == args["taskName"])
                             && (args["includeChildren"] == true || t["parentId"].is_null()))
                         .take(
@@ -392,7 +407,7 @@ async fn dispatch(
     mut request: Request,
     is_get: bool,
 ) -> Result<Response, ApiError> {
-    let can_admin = graph_access(&state, &headers, &jar)?;
+    let (can_admin, can_shop) = graph_access(&state, &headers, &jar)?;
     let mutation = async_graphql_parser::parse_query(&request.query).ok().is_some_and(|doc| {
         doc.operations.iter().any(|(name, op)| {
             request
@@ -414,7 +429,7 @@ async fn dispatch(
         tracing::error!(%error,"GraphQL snapshot failed");
         ApiError::Internal
     })?;
-    request = request.data(Context { state, data });
+    request = request.data(Context { state, data, can_shop });
     let result = SCHEMA.execute(request).await;
     let encoded = serde_json::to_vec(&result).map_err(|_| ApiError::Internal)?;
     let etag = format!("\"{}\"", hex::encode(Sha256::digest(&encoded)));
@@ -443,9 +458,13 @@ async fn dispatch(
     Ok(response)
 }
 
-fn graph_access(state: &AppState, headers: &HeaderMap, jar: &CookieJar) -> Result<bool, ApiError> {
+fn graph_access(
+    state: &AppState,
+    headers: &HeaderMap,
+    jar: &CookieJar,
+) -> Result<(bool, bool), ApiError> {
     if !state.auth.is_enabled() {
-        return Ok(true);
+        return Ok((true, true));
     }
     let username = super::handlers::session_token(jar)
         .and_then(|token| state.sessions.get(token))
@@ -459,5 +478,5 @@ fn graph_access(state: &AppState, headers: &HeaderMap, jar: &CookieJar) -> Resul
     if !roles.admin_access && !roles.shop_access {
         return Err(ApiError::Forbidden);
     }
-    Ok(roles.admin_access)
+    Ok((roles.admin_access, roles.shop_access))
 }

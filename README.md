@@ -98,6 +98,11 @@ Point a client at `http://<server-ip>:8465`; use `/base`, `/update`, `/dlc`, or
 `/multi` for filtered shops. Visit `/setup` for host-specific instructions and
 `/settings` for administration.
 
+## ARM boards
+
+See [ARM deployment](docs/ARM.md) for native builds, static ARM64/ARMv7/ARMv6
+binaries, containers, systemd, and settings for small boards.
+
 ## Helm
 
 The chart in `chart/` provides separate persistent volumes for configuration,
