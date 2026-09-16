@@ -393,7 +393,7 @@ pub async fn build_upstream_titles_response(
         let key = file.title_id.clone().unwrap_or_else(|| file.name.clone());
         let replace = selected
             .get(&key)
-            .map_or(true, |current| file.version.unwrap_or(0) > current.version.unwrap_or(0));
+            .is_none_or(|current| file.version.unwrap_or(0) > current.version.unwrap_or(0));
         if replace {
             selected.insert(key, file);
         }
@@ -642,7 +642,7 @@ where
     for (idx, file) in indexed.iter().filter(|(_, f)| f.kind == kind).copied() {
         let item = to_shop_section_item(idx, file, title_map);
         let key = key_fn(&item);
-        let keep = latest.get(&key).map_or(true, |cur| {
+        let keep = latest.get(&key).is_none_or(|cur| {
             parse_version_number(&item.app_version) > parse_version_number(&cur.app_version)
         });
         if keep {

@@ -15,19 +15,24 @@ pub struct Settings {
     pub titles: TitleSettings,
     pub shop: ShopSettings,
     pub scheduler: SchedulerSettings,
+    pub worker: WorkerSettings,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LibrarySettings {
     pub paths: Vec<PathBuf>,
+    pub watcher: WatcherSettings,
     pub management: LibraryManagementSettings,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct LibraryManagementSettings {
+    #[serde(skip_serializing)]
     pub compress_files: bool,
+    pub compression: CompressionSettings,
+    pub verification: VerificationSettings,
     pub delete_older_updates: bool,
     pub organizer: OrganizerSettings,
 }
@@ -101,7 +106,64 @@ pub struct SphairaSettings {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct SchedulerSettings {
+    #[serde(rename = "titledb_update_interval", alias = "scan_interval")]
     pub scan_interval: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WatcherSettings {
+    pub enabled: bool,
+    pub polling_interval: u64,
+}
+impl Default for WatcherSettings {
+    fn default() -> Self {
+        Self { enabled: true, polling_interval: 60 }
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WorkerSettings {
+    pub count: usize,
+    pub group_limits: BTreeMap<String, usize>,
+}
+impl Default for WorkerSettings {
+    fn default() -> Self {
+        Self { count: 2, group_limits: BTreeMap::from([("io".into(), 1)]) }
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CompressionSettings {
+    pub enabled: bool,
+    pub level: i32,
+    pub long_distance: bool,
+    pub mode: String,
+    pub block_size_exponent: u32,
+    pub threads: u32,
+}
+impl Default for CompressionSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            level: 18,
+            long_distance: false,
+            mode: "auto".into(),
+            block_size_exponent: 20,
+            threads: 0,
+        }
+    }
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct VerificationSettings {
+    pub enabled: bool,
+    pub depth: String,
+}
+impl Default for VerificationSettings {
+    fn default() -> Self {
+        Self { enabled: true, depth: "hash".into() }
+    }
 }
 
 #[derive(Debug, Error)]
@@ -114,6 +176,8 @@ pub enum SettingsError {
     Serialize(#[from] serde_yaml::Error),
     #[error("failed to write settings {path}: {source}")]
     Write { path: String, source: std::io::Error },
+    #[error("{0}")]
+    InvalidSetting(String),
     #[error("invalid scheduler interval: {0}")]
     InvalidInterval(String),
     #[error("settings require at least one library path")]
@@ -128,6 +192,7 @@ impl Default for Settings {
             titles: TitleSettings::default(),
             shop: ShopSettings::default(),
             scheduler: SchedulerSettings::default(),
+            worker: WorkerSettings::default(),
         }
     }
 }
@@ -136,6 +201,7 @@ impl Default for LibrarySettings {
     fn default() -> Self {
         Self {
             paths: vec![PathBuf::from("/games")],
+            watcher: WatcherSettings::default(),
             management: LibraryManagementSettings::default(),
         }
     }
@@ -146,6 +212,8 @@ impl Default for LibraryManagementSettings {
     fn default() -> Self {
         Self {
             compress_files: false,
+            compression: CompressionSettings::default(),
+            verification: VerificationSettings::default(),
             delete_older_updates: false,
             organizer: OrganizerSettings::default(),
         }
@@ -243,6 +311,35 @@ impl Settings {
         let mut value: Value = serde_yaml::from_str(&raw)
             .map_err(|source| SettingsError::Parse { path: path.display().to_string(), source })?;
         migrate_legacy_shop(&mut value);
+        if let Some(scheduler) = mapping_at_mut(&mut value, "scheduler") {
+            if scheduler.contains_key(Value::String("titledb_update_interval".into())) {
+                scheduler.remove(Value::String("scan_interval".into()));
+            }
+        }
+        if let Some(library) = mapping_at_mut(&mut value, "library") {
+            if let Some(paths) =
+                library.get_mut(Value::String("paths".into())).and_then(Value::as_sequence_mut)
+            {
+                for path in paths {
+                    if let Some(value) = path
+                        .as_mapping()
+                        .and_then(|map| map.get(Value::String("path".into())))
+                        .cloned()
+                    {
+                        *path = value;
+                    }
+                }
+            }
+            if let Some(management) =
+                library.get_mut(Value::String("management".into())).and_then(Value::as_mapping_mut)
+            {
+                if let Some(enabled) = management.remove(Value::String("compress_files".into())) {
+                    mapping_entry(management, "compression")
+                        .entry(Value::String("enabled".into()))
+                        .or_insert(enabled);
+                }
+            }
+        }
         let settings: Self = serde_yaml::from_value(value)
             .map_err(|source| SettingsError::Parse { path: path.display().to_string(), source })?;
         settings.validate()?;
@@ -271,6 +368,29 @@ impl Settings {
         if self.library.paths.is_empty() {
             return Err(SettingsError::MissingLibraryPath);
         }
+        let compression = &self.library.management.compression;
+        let invalid = if self.library.watcher.polling_interval == 0 {
+            Some("library/watcher/polling_interval must be at least 1")
+        } else if self.worker.count == 0
+            || self.worker.group_limits.get("io").copied().unwrap_or(0) == 0
+        {
+            Some("worker count and I/O limit must be at least 1")
+        } else if !(1..=22).contains(&compression.level)
+            || !(14..=32).contains(&compression.block_size_exponent)
+            || !matches!(compression.mode.as_str(), "auto" | "solid" | "block")
+        {
+            Some("Invalid compression level, mode, or block size")
+        } else if !matches!(
+            self.library.management.verification.depth.as_str(),
+            "hash" | "signature"
+        ) {
+            Some("Verification depth must be hash or signature")
+        } else {
+            None
+        };
+        if let Some(message) = invalid {
+            return Err(SettingsError::InvalidSetting(message.into()));
+        }
         validate_interval(&self.scheduler.scan_interval)
     }
 
@@ -291,7 +411,7 @@ pub fn validate_interval(raw: &str) -> Result<(), SettingsError> {
         return Err(SettingsError::InvalidInterval(raw.to_string()));
     };
     if number.is_empty()
-        || number.parse::<u64>().ok().map_or(true, |value| value == 0)
+        || number.parse::<u64>().ok().is_none_or(|value| value == 0)
         || !matches!(unit, "s" | "m" | "h" | "d")
     {
         return Err(SettingsError::InvalidInterval(raw.to_string()));

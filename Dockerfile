@@ -1,4 +1,4 @@
-FROM rust:1.89-bookworm AS builder
+FROM rust:1.92-bookworm AS builder
 WORKDIR /src
 COPY Cargo.toml Cargo.lock ./
 COPY ownfoil-rs ./ownfoil-rs

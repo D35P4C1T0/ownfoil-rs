@@ -18,6 +18,7 @@
 mod auth;
 mod catalog;
 mod config;
+mod content;
 mod http;
 mod identifier;
 mod keys;
@@ -27,6 +28,7 @@ mod serve_files;
 mod settings;
 mod shop;
 mod storage;
+mod tasks;
 mod titledb;
 
 use std::net::SocketAddr;
@@ -79,35 +81,11 @@ async fn main() -> anyhow::Result<()> {
 
     let storage = Storage::open(&config.db_path).await.context("failed to initialize storage")?;
     hydrate_auth_from_storage_and_environment(&storage, &auth).await?;
-    let initial_files = scan_all_libraries(
-        &config.library_roots,
-        &storage,
-        &config.settings.library.management,
-        &config.keys_path,
-    )
-    .await?;
-
-    info!(files = initial_files.len(), roots = config.library_roots.len(), "library scan complete");
-
-    let catalog = Arc::new(RwLock::new(Catalog::from_files(initial_files)));
+    let catalog = Arc::new(RwLock::new(Catalog::from_files(Vec::new())));
     let settings = Arc::new(RwLock::new(config.settings));
     let scan_lock = Arc::new(tokio::sync::Mutex::new(()));
 
-    spawn_background_scanner(
-        Arc::clone(&catalog),
-        Arc::clone(&settings),
-        storage.clone(),
-        Arc::clone(&scan_lock),
-        config.keys_path.clone(),
-        Duration::from_secs(config.scan_interval_seconds),
-    );
-    spawn_file_watcher(
-        Arc::clone(&catalog),
-        Arc::clone(&settings),
-        storage.clone(),
-        Arc::clone(&scan_lock),
-        config.keys_path.clone(),
-    );
+    spawn_file_watcher(Arc::clone(&settings), storage.clone());
 
     let (titledb_progress_tx, _) = tokio::sync::broadcast::channel::<String>(16);
     let titledb = TitleDb::with_progress(
@@ -116,7 +94,7 @@ async fn main() -> anyhow::Result<()> {
         Some(titledb_progress_tx.clone()),
     );
     let refresh_interval = config.titledb.refresh_interval.as_str();
-    spawn_titledb_refresh(titledb.clone(), refresh_interval);
+    spawn_titledb_refresh(titledb.clone(), Arc::clone(&settings), storage.clone());
     if config.titledb.enabled {
         info!(
             refresh_interval = %refresh_interval,
@@ -142,6 +120,24 @@ async fn main() -> anyhow::Result<()> {
         titledb_progress_tx,
     };
 
+    if let Some(storage) = &state.storage {
+        for (id, record) in storage.title_override_records().await? {
+            state.titledb.set_override(&id, Some(&record)).await?;
+        }
+    }
+    crate::content::recover(&state).await?;
+    let current = state.settings.read().await.clone();
+    let files = scan_all_libraries(
+        &current.library.paths,
+        state.storage.as_ref().context("storage unavailable")?,
+        &current.library.management,
+        &state.keys_path,
+    )
+    .await?;
+    info!(files = files.len(), "library scan complete");
+    *state.catalog.write().await = Catalog::from_files(files);
+    crate::tasks::start(state.clone()).await?;
+    crate::tasks::queue_pipeline(&state).await?;
     let app = router(state);
     let listener = TcpListener::bind(config.bind)
         .await
@@ -254,94 +250,48 @@ async fn hydrate_auth_from_storage_and_environment(
 
 /// Initialize tracing subscriber with `RUST_LOG` env filter (default: `info`).
 fn init_logging() {
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info"))
+        // nx-archive trace messages contain decrypted key material.
+        .add_directive(
+            "nx_archive=off"
+                .parse()
+                .unwrap_or_else(|_| tracing::level_filters::LevelFilter::OFF.into()),
+        );
 
     tracing_subscriber::fmt().with_env_filter(filter).with_target(false).compact().init();
 }
 
 /// Spawns a background task that refreshes `TitleDB` at the given interval (e.g. `24h`).
 /// Runs one refresh immediately, then on a ticker.
-fn spawn_titledb_refresh(titledb: TitleDb, interval_str: &str) {
-    let interval = humantime::parse_duration(interval_str).unwrap_or(Duration::from_secs(86400));
-    tokio::spawn(async move {
-        if titledb.entry_count().await == 0 {
-            titledb.refresh();
-        }
-        let mut ticker = tokio::time::interval(interval);
-        ticker.tick().await;
-        loop {
-            ticker.tick().await;
-            titledb.refresh();
-        }
-    });
-}
-
-/// Spawns a background task that rescans the library root at the given interval.
-/// Updates the shared catalog in place. Logs errors but does not panic.
-fn spawn_background_scanner(
-    catalog: Arc<RwLock<Catalog>>,
+fn spawn_titledb_refresh(
+    titledb: TitleDb,
     settings: Arc<RwLock<crate::settings::Settings>>,
     storage: Storage,
-    scan_lock: Arc<tokio::sync::Mutex<()>>,
-    keys_path: std::path::PathBuf,
-    fallback_interval: Duration,
 ) {
     tokio::spawn(async move {
+        let mut previous = String::new();
+        let mut startup = true;
         loop {
-            let interval = {
-                let settings = settings.read().await;
-                if settings.scheduler.scan_interval == "0" {
-                    None
-                } else {
-                    humantime::parse_duration(&settings.scheduler.scan_interval).ok()
-                }
-            };
-            tokio::time::sleep(interval.unwrap_or(fallback_interval).max(Duration::from_secs(1)))
-                .await;
-            if interval.is_none() {
-                continue;
-            }
-
-            let (roots, management) = {
-                let settings = settings.read().await;
-                (settings.library.paths.clone(), settings.library.management.clone())
-            };
-            let storage = storage.clone();
-            let catalog = Arc::clone(&catalog);
-            let scan_lock = Arc::clone(&scan_lock);
-            let keys_path = keys_path.clone();
-            let handle = tokio::spawn(async move {
-                let Ok(_guard) = scan_lock.try_lock() else {
-                    info!("scheduled library scan skipped because another scan is running");
-                    return Ok::<_, crate::scanner::ScanError>(0);
-                };
-                let files = scan_all_libraries(&roots, &storage, &management, &keys_path)
-                    .await
-                    .map_err(|error| crate::scanner::ScanError::Walk {
-                        path: roots
-                            .iter()
-                            .map(|root| root.display().to_string())
-                            .collect::<Vec<_>>()
-                            .join(", "),
-                        source: std::io::Error::other(error.to_string()),
-                    })?;
-                let count = files.len();
-                *catalog.write().await = Catalog::from_files(files);
-                Ok::<_, crate::scanner::ScanError>(count)
-            });
-
-            match handle.await {
-                Ok(Ok(count)) => info!(files = count, "catalog refreshed"),
-                Ok(Err(err)) => error!(error = %err, "catalog refresh failed"),
-                Err(join_err) => {
-                    if join_err.is_panic() {
-                        error!(
-                            error = %join_err,
-                            "catalog scanner panicked; will retry on next interval"
-                        );
+            let interval = settings.read().await.scheduler.scan_interval.clone();
+            if titledb.config().await.enabled {
+                if startup && titledb.entry_count().await == 0 {
+                    if let Err(error) =
+                        crate::tasks::enqueue(&storage, "update_titledb", serde_json::json!({}))
+                            .await
+                    {
+                        error!(%error,"failed to queue initial TitleDB refresh");
                     }
                 }
+                if let Err(error) =
+                    crate::tasks::schedule_titledb(&storage, &interval, previous != interval).await
+                {
+                    error!(%error,"failed to schedule TitleDB refresh");
+                }
             }
+            previous = interval;
+            startup = false;
+            tokio::time::sleep(Duration::from_secs(1)).await;
         }
     });
 }
@@ -376,16 +326,18 @@ async fn scan_all_libraries(
     Ok(all_files)
 }
 
-fn spawn_file_watcher(
-    catalog: Arc<RwLock<Catalog>>,
-    settings: Arc<RwLock<crate::settings::Settings>>,
-    storage: Storage,
-    scan_lock: Arc<tokio::sync::Mutex<()>>,
-    keys_path: std::path::PathBuf,
-) {
+fn spawn_file_watcher(settings: Arc<RwLock<crate::settings::Settings>>, storage: Storage) {
     tokio::spawn(async move {
         loop {
-            let roots = settings.read().await.library.paths.clone();
+            let library = settings.read().await.library.clone();
+            if !library.watcher.enabled {
+                tokio::time::sleep(Duration::from_secs(1)).await;
+                continue;
+            }
+            let roots = library.paths.clone();
+            let mut fingerprint = library_fingerprint(&roots);
+            let mut poll_at =
+                tokio::time::Instant::now() + Duration::from_secs(library.watcher.polling_interval);
             let (event_tx, mut event_rx) = tokio::sync::mpsc::unbounded_channel();
             let watcher = notify::RecommendedWatcher::new(
                 move |event| {
@@ -410,30 +362,24 @@ fn spawn_file_watcher(
                 tokio::select! {
                     event = event_rx.recv() => {
                         let Some(Ok(event)) = event else { break };
-                        if !event.paths.iter().any(|path| crate::scanner::is_supported_content(path)) {
-                            continue;
-                        }
-                        if !matches!(event.kind, notify::EventKind::Remove(_)) {
-                            wait_for_stable_files(&event.paths).await;
-                        }
+                        if matches!(event.kind, notify::EventKind::Access(_)) { continue; }
+                        if !matches!(event.kind, notify::EventKind::Remove(_)) && !wait_for_stable_files(&event.paths).await { continue; }
                         while event_rx.try_recv().is_ok() {}
-                        let management = settings.read().await.library.management.clone();
-                        let Ok(_guard) = scan_lock.try_lock() else {
-                            info!("watcher scan skipped because another scan is running");
-                            continue;
-                        };
-                        match scan_all_libraries(&roots, &storage, &management, &keys_path).await {
-                            Ok(files) => {
-                                let count = files.len();
-                                *catalog.write().await = Catalog::from_files(files);
-                                info!(files = count, "catalog refreshed after filesystem event");
-                            }
-                            Err(error) => error!(error = %error, "watcher refresh failed"),
-                        }
+                        if let Err(error)=crate::tasks::enqueue(&storage,"scan_libraries",serde_json::json!({})).await {error!(%error,"failed to queue watcher reconciliation");}
+
                     }
-                    () = tokio::time::sleep(Duration::from_secs(10)) => {
-                        if settings.read().await.library.paths != roots {
-                            break;
+                    () = tokio::time::sleep(Duration::from_secs(1)) => {
+                        let current = settings.read().await.library.clone();
+                        if current.paths != roots || current.watcher != library.watcher { break; }
+                        if tokio::time::Instant::now() >= poll_at {
+                            poll_at = tokio::time::Instant::now() + Duration::from_secs(current.watcher.polling_interval);
+                            let observed = library_fingerprint(&roots);
+                            if observed != fingerprint {
+                                let paths = roots.clone();
+                                if !wait_for_stable_files(&paths).await { continue; }
+                                if let Err(error)=crate::tasks::enqueue(&storage,"scan_libraries",serde_json::json!({})).await {error!(%error,"failed to queue polling reconciliation");}
+                                fingerprint=observed;
+                            }
                         }
                     }
                 }
@@ -442,20 +388,42 @@ fn spawn_file_watcher(
     });
 }
 
-async fn wait_for_stable_files(paths: &[std::path::PathBuf]) {
-    let sizes = || {
-        paths
-            .iter()
-            .filter_map(|path| std::fs::metadata(path).ok().map(|metadata| (path, metadata.len())))
-            .collect::<Vec<_>>()
-    };
-    let mut previous = sizes();
+async fn wait_for_stable_files(paths: &[std::path::PathBuf]) -> bool {
+    // Directory events must inspect their contents, not the directory inode size.
+    let mut previous = library_fingerprint(paths);
     for _ in 0..12 {
         tokio::time::sleep(Duration::from_secs(5)).await;
-        let current = sizes();
+        let current = library_fingerprint(paths);
         if current == previous {
-            return;
+            return true;
         }
         previous = current;
     }
+    // A long-running copy is picked up by a later event or polling pass.
+    false
+}
+
+// Polling also reconciles remote changes that native filesystem notifications miss.
+fn library_fingerprint(roots: &[std::path::PathBuf]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut entries = Vec::new();
+    for root in roots {
+        for entry in walkdir::WalkDir::new(root).into_iter().filter_map(Result::ok) {
+            if crate::scanner::is_supported_content(entry.path()) {
+                if let Ok(metadata) = entry.metadata() {
+                    entries.push((
+                        entry.path().to_path_buf(),
+                        metadata.len(),
+                        metadata.modified().ok(),
+                    ));
+                }
+            }
+        }
+    }
+    entries.sort();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for entry in &entries {
+        entry.hash(&mut hasher);
+    }
+    hasher.finish()
 }

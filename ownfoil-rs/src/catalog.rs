@@ -49,7 +49,7 @@ pub struct ContentFile {
 }
 
 impl ContentFile {
-    pub fn is_multicontent(&self) -> bool {
+    pub const fn is_multicontent(&self) -> bool {
         self.identified_contents.len() > 1
     }
 

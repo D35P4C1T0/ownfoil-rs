@@ -32,7 +32,7 @@ use crate::shop::{
 use crate::auth::{AuthRoles, hash_password};
 use crate::config::TitleDbConfig;
 use crate::scanner::scan_library;
-use crate::settings::{LibraryManagementSettings, SchedulerSettings, ShopSettings, TitleSettings};
+use crate::settings::{SchedulerSettings, ShopSettings, TitleSettings};
 use crate::storage::{NewLibrary, NewUser};
 
 use super::auth::{Access, ensure_access, ensure_authorized, extract_basic_auth};
@@ -140,6 +140,7 @@ pub fn router(state: AppState) -> Router {
         .route("/favicon.ico", get(favicon))
         .route("/robots.txt", get(robots))
         .route("/api/catalog", get(catalog_all))
+        .route("/api/graphql", get(super::graphql::get).post(super::graphql::post))
         .route("/api/sections", get(sections))
         .route("/api/sections/{section}", get(section_entries))
         .route("/api/shop/sections", get(shop_sections))
@@ -165,6 +166,8 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/api/settings/library/management", post(settings_library_management_post))
         .route("/api/settings/scheduler", post(settings_scheduler_post))
+        .route("/api/settings/library/watcher", post(settings_watcher_post))
+        .route("/api/settings/worker", post(settings_worker_post))
         .route("/api/upload", post(upload_post))
         .route("/api/library/scan", post(library_scan_post))
         .route("/api/library/organize/preview", post(organizer_preview_post))
@@ -181,6 +184,10 @@ pub fn router(state: AppState) -> Router {
         .route("/setup", get(setup_page))
         .route("/profile", get(profile_page))
         .route("/admin", get(admin_ui))
+        .route("/admin/tasks", get(super::activity::tasks_page))
+        .route("/admin/stats", get(super::activity::stats_page))
+        .route("/ws/realtime", get(super::activity::websocket))
+        .route("/api/ws", get(super::activity::websocket))
         .route("/admin/settings", get(settings_ui))
         .route("/admin/login", get(login_page).post(login_post))
         .route("/admin/logout", get(logout))
@@ -213,7 +220,7 @@ async fn health(State(state): State<AppState>) -> Json<HealthResponse> {
     Json(HealthResponse { status: "ok", catalog_files: Some(catalog_files) })
 }
 
-fn html_page(template: &str) -> Response {
+pub(super) fn html_page(template: &str) -> Response {
     Html(template.replace("<!--theme-->", THEME_HEAD.as_str())).into_response()
 }
 
@@ -245,11 +252,11 @@ async fn robots() -> Response {
         .into_response()
 }
 
-fn session_token(jar: &CookieJar) -> Option<&str> {
+pub(super) fn session_token(jar: &CookieJar) -> Option<&str> {
     jar.get(SESSION_COOKIE).map(Cookie::value)
 }
 
-fn ensure_same_origin(headers: &HeaderMap) -> Result<(), ApiError> {
+pub(super) fn ensure_same_origin(headers: &HeaderMap) -> Result<(), ApiError> {
     let Some(origin) = headers.get("origin").and_then(|value| value.to_str().ok()) else {
         return Ok(());
     };
@@ -1067,7 +1074,9 @@ async fn settings_library_paths_get(
     ensure_access(&state, &headers, session_token(&jar), Access::Admin).await?;
     ensure_same_origin(&headers)?;
     let paths = state.settings.read().await.library.paths.clone();
-    Ok(Json(serde_json::json!({ "success": true, "errors": [], "paths": paths })))
+    Ok(Json(
+        serde_json::json!({ "success": true, "errors": [], "paths": paths, "watcher": state.settings.read().await.library.watcher }),
+    ))
 }
 
 #[derive(serde::Deserialize)]
@@ -1108,6 +1117,15 @@ async fn settings_library_paths_post(
             })
             .await
             .map_err(|_| ApiError::Internal)?;
+    }
+    if let Some(storage) = &state.storage {
+        crate::tasks::enqueue(
+            storage,
+            "scan_library",
+            serde_json::json!({"library_path":body.path}),
+        )
+        .await
+        .map_err(|_| ApiError::Internal)?;
     }
     Ok(Json(serde_json::json!({ "success": true, "errors": [] })))
 }
@@ -1159,19 +1177,83 @@ async fn settings_library_paths_delete(
     Ok(Json(serde_json::json!({ "success": true, "errors": [] })))
 }
 
+async fn settings_watcher_post(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    update_settings_section(&state, &jar, &headers, "library/watcher", body).await
+}
+
+async fn settings_worker_post(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+    Json(body): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    update_settings_section(&state, &jar, &headers, "worker", body).await
+}
+
+fn merge(target: &mut serde_json::Value, patch: serde_json::Value) {
+    if let (Some(target), Some(patch)) = (target.as_object_mut(), patch.as_object()) {
+        for (key, value) in patch {
+            merge(target.entry(key).or_insert(serde_json::Value::Null), value.clone());
+        }
+    } else {
+        *target = patch;
+    }
+}
+async fn update_settings_section(
+    state: &AppState,
+    jar: &CookieJar,
+    headers: &HeaderMap,
+    section: &str,
+    body: serde_json::Value,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    ensure_access(state, headers, session_token(jar), Access::Admin).await?;
+    ensure_same_origin(headers)?;
+    let mut settings = state.settings.write().await;
+    let mut value = serde_json::to_value(&*settings).map_err(|_| ApiError::Internal)?;
+    let pointer = format!("/{section}");
+    let target = value.pointer_mut(&pointer).ok_or(ApiError::Internal)?;
+    merge(target, body);
+    let candidate = serde_json::from_value::<crate::settings::Settings>(value);
+    let candidate = match candidate {
+        Ok(candidate) => candidate,
+        Err(error) => {
+            return Ok(Json(
+                serde_json::json!({"success": false, "errors": [{"path": section, "error": error.to_string()}]}),
+            ));
+        }
+    };
+    if let Err(error) = candidate.validate() {
+        return Ok(Json(
+            serde_json::json!({"success": false, "errors": [{"path": section, "error": error.to_string()}]}),
+        ));
+    }
+    candidate.save(&state.settings_path).map_err(|_| ApiError::Internal)?;
+    *settings = candidate;
+    drop(settings);
+    Ok(Json(serde_json::json!({"success": true, "errors": []})))
+}
+
 async fn settings_library_management_post(
     State(state): State<AppState>,
     jar: CookieJar,
     headers: HeaderMap,
-    Json(body): Json<LibraryManagementSettings>,
+    Json(body): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    ensure_access(&state, &headers, session_token(&jar), Access::Admin).await?;
-    ensure_same_origin(&headers)?;
-    let mut settings = state.settings.write().await;
-    settings.library.management = body;
-    settings.save(&state.settings_path).map_err(|_| ApiError::Internal)?;
-    drop(settings);
-    Ok(Json(serde_json::json!({ "success": true, "errors": [] })))
+    let result =
+        update_settings_section(&state, &jar, &headers, "library/management", body).await?;
+    if result.0["success"] == true {
+        if let Some(storage) = &state.storage {
+            crate::tasks::enqueue(storage, "process_library", serde_json::json!({}))
+                .await
+                .map_err(|_| ApiError::Internal)?;
+        }
+    }
+    Ok(result)
 }
 
 async fn settings_scheduler_post(
@@ -1185,7 +1267,7 @@ async fn settings_scheduler_post(
     if let Err(error) = crate::settings::validate_interval(&body.scan_interval) {
         return Ok(Json(serde_json::json!({
             "success": false,
-            "errors": [{"path": "scheduler/scan_interval", "error": error.to_string()}]
+            "errors": [{"path": "scheduler/titledb_update_interval", "error": error.to_string()}]
         })));
     }
     let mut settings = state.settings.write().await;

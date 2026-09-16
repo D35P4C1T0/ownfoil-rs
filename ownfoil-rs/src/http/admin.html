@@ -1,72 +1,14 @@
-<!doctype html>
-<html lang="en" data-theme="dark">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="description" content="Browse and manage your ownfoil game library.">
-  <title>ownfoil-rs — Library</title>
-  <!--theme-->
-  <!--lcp-->
-  <link rel="preload" href="/api/shop/sections?limit=100" as="fetch" crossorigin="use-credentials">
-  <link rel="preconnect" href="https://img-eshop.cdn.nintendo.net" crossorigin>
-</head>
-<body>
-<main class="shell">
-  <header class="header">
-    <div><h1>ownfoil-rs</h1><p>Library browser</p></div>
-    <nav class="nav" aria-label="Admin navigation">
-      <label class="sr-only" for="theme">Color theme</label>
-      <select id="theme" class="theme" data-theme-picker><option value="dark">Black</option><option value="light">Light</option><option value="ownfoil">Ownfoil</option></select>
-      <a class="secondary" href="/admin/settings">Settings</a>
-      <a class="secondary" href="/admin/logout">Logout</a>
-    </nav>
-  </header>
-
-  <div class="tabs" role="tablist" aria-label="Library sections">
-    <button role="tab" aria-selected="true" data-section="new">New</button>
-    <button role="tab" aria-selected="false" data-section="recommended">Recommended</button>
-    <button role="tab" aria-selected="false" data-section="updates">Updates</button>
-    <button role="tab" aria-selected="false" data-section="dlc">DLC</button>
-    <button role="tab" aria-selected="false" data-section="all">All</button>
-  </div>
-
-  <p id="loading" class="loading" role="status">Loading library…</p>
-  <div id="content" hidden>
-    <section id="panel-new" class="tab-panel" role="tabpanel"><div id="grid-new" class="grid"></div></section>
-    <section id="panel-recommended" class="tab-panel" role="tabpanel" hidden><div id="grid-recommended" class="grid"></div></section>
-    <section id="panel-updates" class="tab-panel" role="tabpanel" hidden><div id="grid-updates" class="grid"></div></section>
-    <section id="panel-dlc" class="tab-panel" role="tabpanel" hidden><div id="grid-dlc" class="grid"></div></section>
-    <section id="panel-all" class="tab-panel" role="tabpanel" hidden><div id="grid-all" class="grid"></div></section>
-  </div>
-  <div id="error" class="notice error" role="alert" hidden>Couldn’t load the library. <a href="/admin">Try again</a>.</div>
-</main>
-
+<!doctype html><html lang="en" data-theme="dark"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="description" content="Browse your library, identify missing updates and DLC, and manage game files."><title>ownfoil-rs — Library</title><!--theme--><!--lcp--><style>.library-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(var(--card-size,220px),1fr));gap:20px}.library-grid .cover img{width:100%;aspect-ratio:1;object-fit:cover}.library-grid.icons .game .description{display:none}.library-grid .game h2{font-size:1rem}.library-toolbar{display:flex;gap:12px;flex-wrap:wrap;align-items:end;margin:20px 0}.library-toolbar label{display:grid;gap:5px}.library-toolbar input[type=search]{min-width:240px}.game details{margin-top:12px}.game details p{overflow-wrap:anywhere}.file-actions{display:flex;gap:5px;flex-wrap:wrap}.pagination{display:flex;gap:16px;justify-content:center;align-items:center;margin:28px 0}dialog{background:var(--panel,#171717);color:inherit;max-width:600px;width:90%;border:1px solid #777;border-radius:14px;padding:24px}dialog textarea{width:100%;min-height:240px}</style></head><body><main class="shell"><header class="header"><div><h1>ownfoil-rs</h1><p>Library browser</p></div><nav class="nav" aria-label="Main navigation"><label class="sr-only" for="theme">Color theme</label><select id="theme" data-theme-picker><option value="dark">Black</option><option value="light">Light</option><option value="ownfoil">Ownfoil</option></select><a class="secondary" href="/setup">Setup</a><a class="secondary" href="/admin/settings">Settings</a><a class="secondary" href="/admin/tasks">Tasks</a><a class="secondary" href="/admin/stats">Stats</a><a class="secondary" href="/admin/logout">Logout</a></nav></header>
+<form id="filters" class="library-toolbar"><label>Search<input type="search" name="search" placeholder="Game name or title ID"></label><label>Content<select name="type"><option value="BASE">Games</option><option value="DLC">DLC</option><option value="UPDATE">Updates</option><option value="">All content</option></select></label><label>Ownership<select name="owned"><option value="">Owned and missing</option><option value="true">Owned</option><option value="false">Missing</option></select></label><label>Updates<select name="updated"><option value="">All</option><option value="true">Up to date</option><option value="false">Update missing</option></select></label><label>DLC set<select name="complete"><option value="">All</option><option value="true">Complete</option><option value="false">Incomplete</option></select></label><label>Sort<select name="sort"><option value="NAME">Name</option><option value="RELEASE_DATE">Release date</option><option value="VERSION">Version</option></select></label><label>Page size<select name="pageSize"><option>24</option><option>48</option><option>100</option><option>250</option></select></label><label>View<select name="view"><option value="cards">Cards</option><option value="icons">Icons</option></select></label><label>Card size<input name="cardSize" type="range" min="120" max="340" value="220"></label></form>
+<p id="status" role="status" aria-live="polite">Loading library…</p><section id="grid" class="library-grid" aria-label="Library"></section><div class="pagination"><button id="previous">Previous</button><span id="page"></span><button id="next">Next</button></div><dialog id="metadata"><form method="dialog"><h2>Title metadata</h2><p>Override selected fields. Other fields keep their catalogue values.</p><textarea id="record" aria-label="Metadata JSON" spellcheck="false"></textarea><div class="actions"><button id="save-record" type="button">Save</button><button id="reset-record" type="button">Restore catalogue metadata</button><button>Close</button></div><p id="metadata-error" role="alert"></p></form></dialog></main>
 <script>
-const ids=['new','recommended','updates','dlc','all'];
-const esc=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const title=name=>String(name||'').replace(/\s*\[[0-9a-f]{16}\](?:\s*\[v\d+\])?\s*/gi,' ').replace(/\s*\.(nsp|xci|nsz|xcz|nca|nspd|xcid)$/i,'').replace(/\s+/g,' ').trim()||name;
-const size=bytes=>bytes<1024?`${bytes} B`:bytes<1048576?`${(bytes/1024).toFixed(1)} KB`:bytes<1073741824?`${(bytes/1048576).toFixed(1)} MB`:`${(bytes/1073741824).toFixed(1)} GB`;
-
-function card(item,priority=false){
-  const icon=item.icon_url?(item.icon_url.startsWith('http')?item.icon_url:location.origin+item.icon_url):'';
-  const source=priority?`src="${esc(icon)}" fetchpriority="high"`:`data-src="${esc(icon)}"`;
-  const cover=icon?`<img ${source} alt="" width="256" height="256" onerror="this.parentNode.textContent='📦'">`:'📦';
-  return `<article class="game"><div class="cover">${cover}</div><h2 title="${esc(title(item.title_name||item.name))}">${esc(title(item.title_name||item.name))}</h2><span class="badge">${esc(item.app_type)}</span><div class="meta">${esc(item.title_id||'—')} · ${size(item.size)}</div></article>`;
-}
-const observer='IntersectionObserver'in window?new IntersectionObserver(entries=>entries.forEach(entry=>{if(entry.isIntersecting){const image=entry.target;image.src=image.dataset.src;image.removeAttribute('data-src');observer.unobserve(image)}})):null;
-function watch(root){root.querySelectorAll('img[data-src]').forEach(image=>observer?observer.observe(image):image.src=image.dataset.src)}
-function render(id,items){const root=document.querySelector(`#grid-${id}`);root.innerHTML=items.length?items.map((item,index)=>card(item,id==='new'&&index===0)).join(''):'<p class="empty">No items in this section.</p>';watch(root)}
-function show(id){
-  document.querySelectorAll('[role=tab]').forEach(tab=>tab.setAttribute('aria-selected',tab.dataset.section===id));
-  document.querySelectorAll('.tab-panel').forEach(panel=>panel.hidden=panel.id!==`panel-${id}`);
-}
-document.querySelector('.tabs').onclick=event=>{if(event.target.dataset.section)show(event.target.dataset.section)};
-fetch('/api/shop/sections?limit=100',{credentials:'include'}).then(response=>{if(!response.ok)throw new Error(response.status);return response.json()}).then(data=>{
-  const sections=Object.fromEntries(data.sections.map(section=>[section.id,section.items||[]]));
-  ids.forEach(id=>render(id,sections[id]||[]));
-  document.querySelector('#loading').hidden=true;
-  document.querySelector('#content').hidden=false;
-}).catch(()=>{document.querySelector('#loading').hidden=true;document.querySelector('#error').hidden=false});
-</script>
-</body>
-</html>
+const $=s=>document.querySelector(s),f=$('#filters'),esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));let page=1,total=0,sequence=0,items=[],editId;
+const bool=s=>s===''?null:s==='true';const bytes=n=>`${(Number(n)/1073741824).toFixed(2)} GiB`;
+async function gql(query,variables={}){const r=await fetch('/api/graphql',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({query,variables})});if(r.status===401){location.href='/login';throw Error('Login required');}const d=await r.json();if(!r.ok||d.errors)throw Error(d.errors?.map(e=>e.message).join('; ')||r.status);return d.data;}
+const query=`query($owned:Boolean,$type:[AppType!],$updated:Boolean,$complete:Boolean,$search:String,$page:Int!,$size:Int!,$order:OrderBy){apps(owned:$owned,appType:$type,upToDate:$updated,complete:$complete,search:$search,page:$page,pageSize:$size,orderBy:$order,groupByAppId:true){total items{id appId appVersion appType owned releaseDate title{titleId name iconUrl ownership{haveBase upToDate complete}} titledb{name iconUrl} versions{version owned releaseDate} files{id filename size compressed verificationStatus}}}}`;
+function card(a){const title=a.titledb?.name||a.title?.name||a.appId,icon=a.titledb?.iconUrl||a.title?.iconUrl;const owned=a.title?.ownership;return `<article class="game"><div class="cover">${icon&&/^(https?:\/\/|\/)/.test(icon)?`<img src="${esc(icon)}" loading="lazy" alt="" width="256" height="256">`:'<span aria-label="No artwork">No artwork</span>'}</div><h2>${esc(title)}</h2><span class="badge">${esc(a.appType)}</span> <span class="badge">${a.owned?'Owned':'Missing'}</span><div class="description"><p class="meta">${esc(a.appId)}</p>${a.appType==='BASE'?`<p>${owned?.upToDate?'Up to date':'Update missing'} · ${owned?.complete?'DLC complete':'DLC incomplete'}</p>`:''}<details><summary>Versions · v${Number(a.appVersion)}</summary>${(a.versions||[]).map(v=>`<p>v${v.version} · ${v.owned?'Owned':'Missing'} · ${esc(v.releaseDate||'Unknown date')}</p>`).join('')||'<p>No known updates</p>'}</details>${a.files!==null?`<details><summary>Files (${a.files?.length||0})</summary>${(a.files||[]).map(file=>`<p>${esc(file.filename)} · ${bytes(file.size)} · ${esc(file.verificationStatus)}</p><div class="file-actions"><a href="/api/get_game/${encodeURIComponent(file.id)}">Download</a><button data-file="${esc(file.id)}" data-action="verifyFile">Verify</button><button data-file="${esc(file.id)}" data-action="${file.compressed?'decompressFile':'compressFile'}">${file.compressed?'Decompress':'Compress'}</button></div>`).join('')}<button data-edit="${esc(a.title?.titleId||a.appId)}">Edit title metadata</button></details>`:''}</div></article>`;}
+async function load(){const current=++sequence;$('#status').textContent='Loading library…';try{const d=await gql(query,{owned:bool(f.owned.value),type:f.type.value?[f.type.value]:null,updated:bool(f.updated.value),complete:bool(f.complete.value),search:f.search.value,page,size:Number(f.pageSize.value),order:{field:f.sort.value,direction:'ASC'}});if(current!==sequence)return;items=d.apps.items;total=d.apps.total;$('#grid').innerHTML=items.map(card).join('');$('#status').textContent=total?`${total.toLocaleString()} matching apps`:'No matching apps';$('#page').textContent=`Page ${page} of ${Math.max(1,Math.ceil(total/Number(f.pageSize.value)))}`;$('#previous').disabled=page<=1;$('#next').disabled=page*Number(f.pageSize.value)>=total;}catch(e){$('#status').textContent=e.message;}}
+let debounce;f.onsubmit=e=>e.preventDefault();f.oninput=e=>{if(e.target===f.cardSize){$('#grid').style.setProperty('--card-size',f.cardSize.value+'px');return;}if(e.target===f.view){$('#grid').classList.toggle('icons',f.view.value==='icons');return;}clearTimeout(debounce);page=1;debounce=setTimeout(load,e.target===f.search?250:0);};$('#previous').onclick=()=>{page--;load();};$('#next').onclick=()=>{page++;load();};
+$('#grid').onclick=async e=>{const action=e.target.dataset.action,id=e.target.dataset.file;if(action&&id){e.target.disabled=true;try{await gql(`mutation($id:ID!){${action}(fileId:$id){id}}`,{id});$('#status').textContent='Task queued. Follow progress on Tasks.';}catch(error){$('#status').textContent=error.message;}finally{e.target.disabled=false;}}if(e.target.dataset.edit){editId=e.target.dataset.edit;const item=items.find(a=>a.title?.titleId===editId);$('#record').value=JSON.stringify({name:item?.title?.name||''},null,2);$('#metadata-error').textContent='';$('#metadata').showModal();}};
+$('#save-record').onclick=async()=>{try{const record=JSON.parse($('#record').value);await gql('mutation($id:ID!,$record:String!){setTitleOverride(titleId:$id,record:$record){titleId}}',{id:editId,record:JSON.stringify(record)});$('#metadata').close();load();}catch(e){$('#metadata-error').textContent=e.message;}};$('#reset-record').onclick=async()=>{try{await gql('mutation($id:ID!){deleteTitleOverride(titleId:$id)}',{id:editId});$('#metadata').close();load();}catch(e){$('#metadata-error').textContent=e.message;}};load();
+</script></body></html>

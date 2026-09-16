@@ -16,7 +16,7 @@ use crate::config::TitleDbConfig;
 /// Per-title metadata from `TitleDB`.
 ///
 /// Used to enrich shop section items with icon/banner URLs and display names.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct TitleInfo {
     /// CDN URL for the game icon (e.g. Nintendo eShop).
     pub icon_url: Option<String>,
@@ -24,6 +24,7 @@ pub struct TitleInfo {
     pub banner_url: Option<String>,
     /// Localized game name.
     pub name: Option<String>,
+    pub record: serde_json::Map<String, serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -31,6 +32,7 @@ pub struct TitleVersionInfo {
     pub title_id: String,
     pub latest_version: Option<u64>,
     pub versions: Vec<u64>,
+    pub release_dates: std::collections::BTreeMap<u64, String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -54,6 +56,14 @@ struct TitleDbArtifacts {
     cnmts: HashMap<String, Vec<TitleCnmtInfo>>,
     languages: HashMap<String, TitleLanguageInfo>,
     regions: HashMap<String, Vec<String>>,
+}
+
+/// Release refresh ownership even when a refresh future is cancelled or panics.
+struct RefreshGuard(Arc<AtomicBool>);
+impl Drop for RefreshGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
 }
 
 /// Lazy-loaded `TitleDB` cache. Loads from disk on first access, refreshes in background.
@@ -101,9 +111,9 @@ impl TitleDb {
     }
 
     #[cfg(test)]
-    fn from_artifacts(artifacts: TitleDbArtifacts) -> Self {
+    fn from_artifacts(artifacts: &TitleDbArtifacts) -> Self {
         let mut db = memory_database();
-        if let Err(error) = replace_artifacts(&mut db, &artifacts) {
+        if let Err(error) = replace_artifacts(&mut db, artifacts) {
             panic!("in-memory TitleDB rejected artifacts: {error}");
         }
         Self {
@@ -173,24 +183,70 @@ impl TitleDb {
 
     /// Look up icon and banner URLs for a title ID (16-char hex, uppercase).
     pub async fn lookup(&self, title_id: &str) -> Option<TitleInfo> {
-        let normalized = title_id.to_uppercase();
+        let normalized = title_id.to_ascii_uppercase();
         let guard = self.inner.lock().await;
-        guard
+        let mut info = guard
             .db
             .query_row(
-                "SELECT icon_url, banner_url, name FROM titles WHERE id = ?1",
-                [normalized],
+                "SELECT icon_url,banner_url,name,record FROM titles WHERE id=?1",
+                [&normalized],
                 |row| {
                     Ok(TitleInfo {
                         icon_url: row.get(0)?,
                         banner_url: row.get(1)?,
                         name: row.get(2)?,
+                        record: serde_json::from_str(&row.get::<_, String>(3)?).unwrap_or_default(),
                     })
                 },
             )
             .optional()
             .ok()
-            .flatten()
+            .flatten();
+        if let Ok(Some(raw)) = guard
+            .db
+            .query_row("SELECT record FROM custom_titles WHERE id=?1", [&normalized], |row| {
+                row.get::<_, String>(0)
+            })
+            .optional()
+        {
+            if let Ok(record) =
+                serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&raw)
+            {
+                let info = info.get_or_insert_with(TitleInfo::default);
+                for (key, value) in record {
+                    if !value.is_null() {
+                        info.record.insert(key, value);
+                    }
+                }
+                for (key, field) in [
+                    ("name", &mut info.name),
+                    ("iconUrl", &mut info.icon_url),
+                    ("bannerUrl", &mut info.banner_url),
+                ] {
+                    if let Some(value) = info.record.get(key).and_then(serde_json::Value::as_str) {
+                        *field = Some(value.to_string());
+                    }
+                }
+            }
+        }
+        drop(guard);
+        info
+    }
+
+    pub async fn set_override(
+        &self,
+        id: &str,
+        record: Option<&serde_json::Value>,
+    ) -> Result<(), TitleDbError> {
+        let guard = self.inner.lock().await;
+        if let Some(record) = record {
+            guard.db.execute("INSERT INTO custom_titles(id,record) VALUES(?1,?2) ON CONFLICT(id) DO UPDATE SET record=excluded.record",params![id,record.to_string()])?;
+        } else {
+            guard.db.execute("DELETE FROM custom_titles WHERE id=?1", [id])?;
+        }
+        drop(guard);
+        self.generation.fetch_add(1, Ordering::AcqRel);
+        Ok(())
     }
 
     /// Return known update versions for a title or application ID.
@@ -200,22 +256,23 @@ impl TitleDb {
         guard
             .db
             .query_row(
-                "SELECT latest_version, versions FROM versions WHERE title_id = ?1",
+                "SELECT latest_version, versions, release_dates FROM versions WHERE title_id = ?1",
                 [&normalized],
                 |row| {
                     let latest: Option<i64> = row.get(0)?;
                     let versions: String = row.get(1)?;
-                    Ok((latest, versions))
+                    Ok((latest, versions, row.get::<_, String>(2)?))
                 },
             )
             .optional()
             .ok()
             .flatten()
-            .and_then(|(latest, versions)| {
+            .and_then(|(latest, versions, dates)| {
                 Some(TitleVersionInfo {
                     title_id: normalized,
                     latest_version: latest.and_then(|value| u64::try_from(value).ok()),
                     versions: serde_json::from_str(&versions).ok()?,
+                    release_dates: serde_json::from_str(&dates).unwrap_or_default(),
                 })
             })
     }
@@ -276,6 +333,7 @@ impl TitleDb {
             .optional()
             .ok()
             .flatten()?;
+        drop(guard);
         serde_json::from_str::<Vec<String>>(&languages)
             .ok()
             .map(|known| known.iter().any(|value| value == language))
@@ -316,7 +374,7 @@ impl TitleDb {
             return;
         }
         let inner = Arc::clone(&self.inner);
-        let refreshing = Arc::clone(&self.refreshing);
+        let refreshing = RefreshGuard(Arc::clone(&self.refreshing));
         let generation = Arc::clone(&self.generation);
         tokio::spawn(async move {
             match do_refresh_without_lock(&inner).await {
@@ -325,8 +383,24 @@ impl TitleDb {
                 }
                 Err(e) => error!(error = %e, "titledb refresh failed"),
             }
-            refreshing.store(false, Ordering::Release);
+            drop(refreshing);
         });
+    }
+
+    pub async fn refresh_and_wait(&self) -> Result<(), TitleDbError> {
+        while self
+            .refreshing
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        let _refresh_guard = RefreshGuard(Arc::clone(&self.refreshing));
+        let result = do_refresh_without_lock(&self.inner).await;
+        if result.is_ok() {
+            self.generation.fetch_add(1, Ordering::AcqRel);
+        }
+        result
     }
 
     pub async fn config(&self) -> TitleDbConfig {
@@ -341,6 +415,29 @@ impl TitleDb {
         self.inner.lock().await.last_refresh
     }
 
+    #[allow(clippy::significant_drop_tightening)] // SQLite statement borrows the connection guard through row iteration.
+    pub async fn records(&self) -> Vec<serde_json::Value> {
+        let guard = self.inner.lock().await;
+        let Ok(mut statement) =
+            guard.db.prepare("SELECT id,icon_url,banner_url,name,record FROM titles ORDER BY id")
+        else {
+            return Vec::new();
+        };
+        let Ok(rows) = statement.query_map([], |row| {
+            let mut record = serde_json::from_str::<serde_json::Value>(&row.get::<_, String>(4)?)
+                .unwrap_or_else(|_| serde_json::json!({}));
+            record["titleId"] = row.get::<_, String>(0)?.into();
+            record["iconUrl"] = row.get::<_, Option<String>>(1)?.into();
+            record["bannerUrl"] = row.get::<_, Option<String>>(2)?.into();
+            record["name"] = row.get::<_, Option<String>>(3)?.into();
+            record["source"] = "titledb".into();
+            Ok(record)
+        }) else {
+            return Vec::new();
+        };
+        rows.filter_map(Result::ok).collect()
+    }
+
     pub async fn entry_count(&self) -> usize {
         title_count(&self.inner.lock().await.db)
     }
@@ -349,6 +446,7 @@ impl TitleDb {
         self.generation.load(Ordering::Acquire)
     }
 
+    #[allow(clippy::significant_drop_tightening)] // SQLite statement borrows the connection guard through row iteration.
     async fn cnmts_for_base(&self, base_title_id: &str) -> Vec<TitleCnmtInfo> {
         let guard = self.inner.lock().await;
         let Ok(mut statement) = guard.db.prepare(
@@ -542,6 +640,7 @@ async fn fetch_and_merge(
                             icon_url: None,
                             banner_url: None,
                             name: None,
+                            record: serde_json::Map::default(),
                         })
                         .merge(info);
                 }
@@ -894,7 +993,7 @@ fn parse_titles_json(buf: &str) -> Result<Vec<(String, TitleInfo)>, TitleDbError
             .map(ToString::to_string);
         let name = entry.get("name").and_then(|v| v.as_str()).map(ToString::to_string);
 
-        out.push((id, TitleInfo { icon_url, banner_url, name }));
+        out.push((id, TitleInfo { icon_url, banner_url, name, record: entry.clone() }));
     }
 
     Ok(out)
@@ -968,7 +1067,8 @@ fn parse_version_value(title_id: &str, value: &serde_json::Value) -> TitleVersio
         }
         serde_json::Value::Array(values) => values.iter().filter_map(value_u64).collect(),
         serde_json::Value::Object(map) => {
-            let mut versions = Vec::new();
+            let mut versions =
+                map.keys().filter_map(|key| key.parse::<u64>().ok()).collect::<Vec<_>>();
             for key in ["version", "latest", "latest_version", "latestVersion"] {
                 if let Some(version) = map.get(key).and_then(value_u64) {
                     versions.push(version);
@@ -984,7 +1084,20 @@ fn parse_version_value(title_id: &str, value: &serde_json::Value) -> TitleVersio
         _ => Vec::new(),
     };
 
-    TitleVersionInfo::from_versions(title_id.to_string(), versions)
+    let mut info = TitleVersionInfo::from_versions(title_id.to_string(), versions);
+    if let Some(map) = value.as_object() {
+        for (version, metadata) in map {
+            if let Ok(version) = version.parse::<u64>() {
+                if let Some(date) = metadata
+                    .as_str()
+                    .or_else(|| metadata.get("releaseDate").and_then(serde_json::Value::as_str))
+                {
+                    info.release_dates.insert(version, date.to_string());
+                }
+            }
+        }
+    }
+    info
 }
 
 fn parse_cnmts_json(buf: &str) -> Result<HashMap<String, Vec<TitleCnmtInfo>>, TitleDbError> {
@@ -1113,6 +1226,9 @@ fn parse_regions_json(buf: &str) -> Result<HashMap<String, Vec<String>>, TitleDb
 
 impl TitleInfo {
     fn merge(&mut self, other: &Self) {
+        for (key, value) in &other.record {
+            self.record.entry(key).or_insert_with(|| value.clone());
+        }
         if self.icon_url.is_none() && other.icon_url.is_some() {
             self.icon_url.clone_from(&other.icon_url);
         }
@@ -1139,10 +1255,16 @@ impl TitleVersionInfo {
         versions.sort_unstable();
         versions.dedup();
         let latest_version = versions.iter().copied().max();
-        Self { title_id, latest_version, versions }
+        Self {
+            title_id,
+            latest_version,
+            versions,
+            release_dates: std::collections::BTreeMap::default(),
+        }
     }
 
     fn merge_versions(&mut self, other: &Self) {
+        self.release_dates.extend(other.release_dates.clone());
         self.versions.extend(other.versions.iter().copied());
         self.versions.sort_unstable();
         self.versions.dedup();
@@ -1267,10 +1389,11 @@ fn initialize_database(db: &Connection) -> Result<(), rusqlite::Error> {
          PRAGMA synchronous=NORMAL;
          PRAGMA cache_size=-2048;
          CREATE TABLE IF NOT EXISTS titles (
-           id TEXT PRIMARY KEY, icon_url TEXT, banner_url TEXT, name TEXT
+           id TEXT PRIMARY KEY, icon_url TEXT, banner_url TEXT, name TEXT, record TEXT NOT NULL DEFAULT '{}'
          ) WITHOUT ROWID;
+         CREATE TABLE IF NOT EXISTS custom_titles (id TEXT PRIMARY KEY,record TEXT NOT NULL) WITHOUT ROWID;
          CREATE TABLE IF NOT EXISTS versions (
-           title_id TEXT PRIMARY KEY, latest_version INTEGER, versions TEXT NOT NULL
+           title_id TEXT PRIMARY KEY, latest_version INTEGER, versions TEXT NOT NULL, release_dates TEXT NOT NULL DEFAULT '{}'
          ) WITHOUT ROWID;
          CREATE TABLE IF NOT EXISTS cnmts (
            app_id TEXT NOT NULL, title_id TEXT NOT NULL, title_type TEXT,
@@ -1287,7 +1410,18 @@ fn initialize_database(db: &Connection) -> Result<(), rusqlite::Error> {
          CREATE TABLE IF NOT EXISTS metadata (
            key TEXT PRIMARY KEY, value TEXT NOT NULL
          ) WITHOUT ROWID;",
-    )
+    )?;
+    let mut columns = db.prepare("PRAGMA table_info(titles)")?;
+    let names = columns.query_map([], |r| r.get::<_, String>(1))?.collect::<Result<Vec<_>, _>>()?;
+    if !names.iter().any(|name| name == "record") {
+        db.execute("ALTER TABLE titles ADD COLUMN record TEXT NOT NULL DEFAULT '{}'", [])?;
+    }
+    let mut columns = db.prepare("PRAGMA table_info(versions)")?;
+    let names = columns.query_map([], |r| r.get::<_, String>(1))?.collect::<Result<Vec<_>, _>>()?;
+    if !names.iter().any(|name| name == "release_dates") {
+        db.execute("ALTER TABLE versions ADD COLUMN release_dates TEXT NOT NULL DEFAULT '{}'", [])?;
+    }
+    Ok(())
 }
 
 fn import_json_cache(
@@ -1352,10 +1486,16 @@ fn replace_titles(
     transaction.execute("DELETE FROM titles", [])?;
     {
         let mut insert = transaction.prepare(
-            "INSERT INTO titles (id, icon_url, banner_url, name) VALUES (?1, ?2, ?3, ?4)",
+            "INSERT INTO titles (id, icon_url, banner_url, name, record) VALUES (?1, ?2, ?3, ?4, ?5)",
         )?;
         for (id, info) in titles {
-            insert.execute(params![id, info.icon_url, info.banner_url, info.name])?;
+            insert.execute(params![
+                id,
+                info.icon_url,
+                info.banner_url,
+                info.name,
+                serde_json::to_string(&info.record)?
+            ])?;
         }
     }
     transaction.commit()?;
@@ -1372,13 +1512,14 @@ fn replace_artifacts(
     )?;
     {
         let mut insert = transaction.prepare(
-            "INSERT INTO versions (title_id, latest_version, versions) VALUES (?1, ?2, ?3)",
+            "INSERT INTO versions (title_id, latest_version, versions, release_dates) VALUES (?1, ?2, ?3, ?4)",
         )?;
         for info in artifacts.versions.values() {
             insert.execute(params![
                 info.title_id,
                 info.latest_version.and_then(|value| i64::try_from(value).ok()),
-                serde_json::to_string(&info.versions)?
+                serde_json::to_string(&info.versions)?,
+                serde_json::to_string(&info.release_dates)?
             ])?;
         }
     }
@@ -1453,7 +1594,19 @@ fn load_cache(path: &std::path::Path) -> Result<HashMap<String, TitleInfo>, Titl
         let icon_url = obj.get("icon_url").and_then(|v| v.as_str()).map(String::from);
         let banner_url = obj.get("banner_url").and_then(|v| v.as_str()).map(String::from);
         let name = obj.get("name").and_then(|v| v.as_str()).map(String::from);
-        map.insert(id, TitleInfo { icon_url, banner_url, name });
+        map.insert(
+            id,
+            TitleInfo {
+                icon_url,
+                banner_url,
+                name,
+                record: obj
+                    .get("record")
+                    .and_then(serde_json::Value::as_object)
+                    .cloned()
+                    .unwrap_or_else(|| obj.clone()),
+            },
+        );
     }
     Ok(map)
 }
@@ -1620,7 +1773,7 @@ mod tests {
             Some(r#"{"0100000000010000": {"languages": ["en", "it"]}}"#),
         )
         .expect("artifact fixtures parse");
-        let titledb = TitleDb::from_artifacts(artifacts);
+        let titledb = TitleDb::from_artifacts(&artifacts);
 
         assert_eq!(titledb.latest_version("0100000000010000").await, Some(131_072));
         assert_eq!(

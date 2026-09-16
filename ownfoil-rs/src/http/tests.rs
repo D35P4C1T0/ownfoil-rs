@@ -4,7 +4,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
 
-    use anyhow::Result;
+    use anyhow::{Context, Result};
     use axum::http::StatusCode;
     use axum_test::TestServer;
     use serde_json::Value;
@@ -165,10 +165,9 @@ mod tests {
         }
 
         let admin = server.get("/admin").await.text();
-        assert!(admin.contains("rel=\"preload\""));
-        assert!(admin.contains("fetchpriority=\"high\""));
         assert!(admin.contains("name=\"description\""));
-        assert!(admin.contains("IntersectionObserver"));
+        assert!(admin.contains("loading=\"lazy\""));
+        assert!(admin.contains("/api/graphql"));
         assert!(!admin.contains("<h3"));
 
         let compressed = server.get("/admin").add_header("Accept-Encoding", "gzip").await;
@@ -845,6 +844,7 @@ mod tests {
         let titledb = TitleDb::from_entries(vec![(
             String::from("0100000000000000"),
             TitleInfo {
+                record: serde_json::Map::default(),
                 icon_url: Some(String::from("https://example.test/icon.png")),
                 banner_url: None,
                 name: Some(String::from("Example Game")),
@@ -871,6 +871,7 @@ mod tests {
         let titledb = TitleDb::from_entries(vec![(
             String::from("0100000000000000"),
             TitleInfo {
+                record: serde_json::Map::default(),
                 icon_url: None,
                 banner_url: Some(String::from("https://example.test/banner.jpg")),
                 name: Some(String::from("Example Game")),
@@ -908,6 +909,338 @@ mod tests {
         let body: Value = response.json();
         assert_eq!(body.get("success"), Some(&Value::Bool(true)));
         assert_eq!(body.get("saves").and_then(Value::as_array).map(Vec::len), Some(0));
+        Ok(())
+    }
+    #[tokio::test]
+    async fn graphql_contract_queries_validate_and_paginate() -> Result<()> {
+        let state = test_app_state(
+            Catalog::from_files(Vec::new()),
+            std::env::temp_dir(),
+            AuthSettings::from_users(Vec::new()),
+            SessionStore::new(24),
+        );
+        let server = TestServer::new(router(state))?;
+        let response=server.post("/api/graphql").json(&serde_json::json!({"query":"{ titles(page:0,pageSize:900) { total items { titleId name } } stats { totalFiles totalSize ownedApps } __type(name: \"Mutation\") { fields { name } } }"})).await;
+        response.assert_status_ok();
+        let value = response.json::<Value>();
+        assert!(value.get("errors").is_none(), "{value}");
+        assert_eq!(value["data"]["titles"]["total"], 0);
+        let invalid = server
+            .post("/api/graphql")
+            .json(&serde_json::json!({"query":"{ stats { nonexistent } }"}))
+            .await
+            .json::<Value>();
+        assert!(invalid["errors"].is_array());
+        let get = server
+            .get("/api/graphql")
+            .add_query_param("query", "mutation { purgeFailedTasks }")
+            .await;
+        assert_eq!(get.status_code(), StatusCode::METHOD_NOT_ALLOWED);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn graphql_requires_identity_on_public_shops_and_respects_roles_and_etags() -> Result<()>
+    {
+        let auth = AuthSettings::from_users(vec![AuthUser {
+            username: "admin".into(),
+            password: "secret".into(),
+        }]);
+        auth.upsert_hashed_user(
+            "guest".into(),
+            "unused-in-session-test".into(),
+            crate::auth::AuthRoles { admin_access: false, shop_access: true, backup_access: false },
+        );
+        let sessions = SessionStore::new(24);
+        let token = sessions.create("guest".into());
+        let state = test_app_state(
+            Catalog::from_files(Vec::new()),
+            std::env::temp_dir(),
+            auth,
+            sessions.clone(),
+        );
+        state.settings.write().await.shop.public = true;
+        let server = TestServer::new(router(state))?;
+        server.get("/api/graphql").await.assert_status_unauthorized();
+        let cookie = format!("ownfoil_session={token}");
+        let query = serde_json::json!({"query":"{ files { total } tasks { id } workers { id } }"});
+        let response = server.post("/api/graphql").add_header("Cookie", &cookie).json(&query).await;
+        response.assert_status_ok();
+        let data = response.json::<Value>();
+        assert!(data.get("errors").is_none(), "{data}");
+        assert_eq!(data["data"]["files"]["total"], 0);
+        assert_eq!(data["data"]["tasks"], serde_json::json!([]));
+        assert_eq!(data["data"]["workers"], serde_json::json!([]));
+        let etag = response.header("etag");
+        server
+            .post("/api/graphql")
+            .add_header("Cookie", &cookie)
+            .add_header("if-none-match", etag)
+            .json(&query)
+            .await
+            .assert_status(StatusCode::NOT_MODIFIED);
+        let mutation = server
+            .post("/api/graphql")
+            .add_header("Cookie", &cookie)
+            .json(&serde_json::json!({"query":"mutation { purgeFailedTasks }"}))
+            .await;
+        assert!(mutation.json::<Value>()["errors"].is_array());
+        assert_eq!(mutation.header("cache-control"), "no-store");
+        sessions.remove(&token);
+        server
+            .post("/api/graphql")
+            .add_header("Cookie", &cookie)
+            .json(&query)
+            .await
+            .assert_status_unauthorized();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn current_settings_preserve_partial_updates_and_reject_invalid_limits() -> Result<()> {
+        let dir = tempdir()?;
+        let mut state = test_app_state(
+            Catalog::from_files(Vec::new()),
+            dir.path().into(),
+            AuthSettings::from_users(Vec::new()),
+            SessionStore::new(24),
+        );
+        state.settings_path = dir.path().join("settings.yaml");
+        let server = TestServer::new(router(state))?;
+        let response = server
+            .post("/api/settings/library/watcher")
+            .json(&serde_json::json!({"enabled":false}))
+            .await;
+        assert_eq!(response.json::<Value>()["success"], true);
+        let invalid = server
+            .post("/api/settings/worker")
+            .json(&serde_json::json!({"count":0}))
+            .await
+            .json::<Value>();
+        assert_eq!(invalid["success"], false);
+        let response = server
+            .post("/api/settings/scheduler")
+            .json(&serde_json::json!({"titledb_update_interval":"30m"}))
+            .await
+            .json::<Value>();
+        assert_eq!(response["success"], true);
+        let settings = server.get("/api/settings").await.json::<Value>();
+        assert_eq!(settings["library"]["watcher"]["enabled"], false);
+        assert_eq!(settings["library"]["watcher"]["polling_interval"], 60);
+        assert_eq!(settings["worker"]["count"], 2);
+        assert_eq!(settings["scheduler"]["titledb_update_interval"], "30m");
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[ignore = "requires OWNFOIL_TEST_ARCHIVE and OWNFOIL_TEST_KEYS; only temporary copies are modified"]
+    async fn local_archive_conversion_roundtrip() -> Result<()> {
+        let source = PathBuf::from(
+            std::env::var_os("OWNFOIL_TEST_ARCHIVE").context("Set OWNFOIL_TEST_ARCHIVE")?,
+        );
+        let keys =
+            PathBuf::from(std::env::var_os("OWNFOIL_TEST_KEYS").context("Set OWNFOIL_TEST_KEYS")?);
+        let dir = tempdir()?;
+        let games = dir.path().join("games");
+        std::fs::create_dir(&games)?;
+        let input = games.join(source.file_name().context("Archive needs a filename")?);
+        std::fs::copy(&source, &input).context("Copy input archive")?;
+        let mut state = test_app_state(
+            Catalog::from_files(Vec::new()),
+            games.clone(),
+            AuthSettings::from_users(Vec::new()),
+            SessionStore::new(24),
+        );
+        state.keys_path = keys;
+        state.data_dir = dir.path().join("data");
+        std::fs::create_dir(&state.data_dir)?;
+        let storage = crate::storage::Storage::open(state.data_dir.join("test.db")).await?;
+        state.storage = Some(storage.clone());
+        {
+            let mut settings = state.settings.write().await;
+            settings.library.paths = vec![games.clone()];
+            settings.library.management.organizer.enabled = false;
+            settings.library.management.compression.level = 1;
+            settings.library.management.compression.block_size_exponent = 20;
+            settings.library.management.compression.mode =
+                std::env::var("OWNFOIL_TEST_MODE").unwrap_or_else(|_| "solid".into());
+        }
+        let management = state.settings.read().await.library.management.clone();
+        let files = crate::scan_all_libraries(
+            std::slice::from_ref(&games),
+            &storage,
+            &management,
+            &state.keys_path,
+        )
+        .await?;
+        anyhow::ensure!(files.len() == 1, "Expected one archive in isolated test library");
+        let id = files[0].id;
+        *state.catalog.write().await = Catalog::from_files(files);
+        let input = serde_json::json!({"file_id":id});
+        let task = crate::tasks::enqueue(&storage, "verify_file", input.clone()).await?;
+        let task_id = task["id"].as_str().unwrap().parse::<i64>()?;
+        let before = crate::content::run(&state, task_id, "verify_file", &input)
+            .await
+            .context("Verify test copy")?;
+        anyhow::ensure!(
+            before["hashValid"] == true,
+            "Original archive verification failed: {}",
+            before["verificationError"]
+        );
+        let compressed = matches!(source.extension().and_then(|s| s.to_str()), Some("nsz" | "xcz"));
+        let directions = if compressed {
+            ["decompress_file", "compress_file"]
+        } else {
+            ["compress_file", "decompress_file"]
+        };
+        for direction in directions {
+            let task = crate::tasks::enqueue(&storage, direction, input.clone()).await?;
+            let task_id = task["id"].as_str().unwrap().parse::<i64>()?;
+            crate::content::run(&state, task_id, direction, &input)
+                .await
+                .with_context(|| format!("Conversion {direction}"))?;
+            assert!(storage.get_file(i64::try_from(id)?).await?.is_some());
+        }
+        let after = crate::content::run(&state, task_id, "verify_file", &input)
+            .await
+            .context("Verify test copy")?;
+        assert_eq!(after["hashValid"], true, "{after}");
+        assert_eq!(before["signatureValid"], after["signatureValid"]);
+        assert!(source.exists());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn conversion_recovery_preserves_ids_and_rejects_changed_payloads() -> Result<()> {
+        let dir = tempdir()?;
+        let games = dir.path().join("games");
+        std::fs::create_dir(&games)?;
+        let mut state = test_app_state(
+            Catalog::from_files(Vec::new()),
+            games.clone(),
+            AuthSettings::from_users(Vec::new()),
+            SessionStore::new(24),
+        );
+        state.data_dir = dir.path().join("data");
+        std::fs::create_dir(&state.data_dir)?;
+        let storage = crate::storage::Storage::open(state.data_dir.join("test.db")).await?;
+        state.storage = Some(storage.clone());
+        state.settings.write().await.library.paths = vec![games.clone()];
+        let mut bytes = b"PFS0".to_vec();
+        bytes.extend(1u32.to_le_bytes());
+        bytes.extend(9u32.to_le_bytes());
+        bytes.extend([0; 4]);
+        bytes.extend(0u64.to_le_bytes());
+        bytes.extend(3u64.to_le_bytes());
+        bytes.extend([0; 8]);
+        bytes.extend(b"file.bin\0abc");
+        let source = games.join("Demo.nsp");
+        let target = games.join("Demo.nsz");
+        std::fs::write(&source, &bytes)?;
+        let files = crate::scan_all_libraries(
+            std::slice::from_ref(&games),
+            &storage,
+            &state.settings.read().await.library.management,
+            &state.keys_path,
+        )
+        .await?;
+        let id = files[0].id;
+        *state.catalog.write().await = Catalog::from_files(files);
+        let journal = state.data_dir.join(format!("conversion-{id}.json"));
+        let canonical_root = std::fs::canonicalize(&games)?;
+        let data = serde_json::json!({"source":std::fs::canonicalize(&source)?,"target":canonical_root.join("Demo.nsz"),"root":canonical_root,"library_path":games,"file_id":id});
+        std::fs::write(&journal, data.to_string())?;
+        // Crash before target publication keeps the source and removes the stale journal.
+        crate::content::recover(&state).await?;
+        assert!(source.exists());
+        assert!(!journal.exists());
+        std::fs::write(&journal, data.to_string())?;
+        let mut damaged = bytes.clone();
+        *damaged.last_mut().unwrap() = b'd';
+        std::fs::write(&target, damaged)?;
+        assert!(crate::content::recover(&state).await.is_err());
+        assert!(source.exists() && journal.exists());
+        // After publication, valid output replaces the source while retaining its ID.
+        std::fs::write(&target, &bytes)?;
+        crate::content::recover(&state).await?;
+        assert!(!source.exists());
+        assert!(!journal.exists());
+        assert_eq!(std::fs::read(&target)?, bytes);
+        let file = storage.get_file(i64::try_from(id)?).await?.unwrap();
+        assert_eq!(file.path, "Demo.nsz");
+        assert_eq!(state.catalog.read().await.files().len(), 1);
+        assert_eq!(storage.list_libraries().await?.len(), 1);
+        crate::content::recover(&state).await?;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn scan_parent_waits_for_children_and_cancel_reaches_descendants() -> Result<()> {
+        let dir = tempdir()?;
+        let mut state = test_app_state(
+            Catalog::from_files(Vec::new()),
+            dir.path().into(),
+            AuthSettings::from_users(Vec::new()),
+            SessionStore::new(24),
+        );
+        let storage = crate::storage::Storage::open(dir.path().join("test.db")).await?;
+        state.storage = Some(storage.clone());
+        state.settings.write().await.library.paths = vec![dir.path().to_path_buf()];
+        let parent =
+            crate::tasks::enqueue(&storage, "scan_libraries", serde_json::json!({})).await?;
+        let parent_id = parent["id"].as_str().unwrap().parse::<i64>()?;
+        crate::tasks::start(state).await?;
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                let parent = crate::tasks::get(&storage, parent_id).await?.unwrap();
+                if parent["status"] == "COMPLETED" {
+                    break;
+                }
+                assert_ne!(parent["status"], "FAILED", "{parent}");
+                tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            }
+            Ok::<_, anyhow::Error>(())
+        })
+        .await??;
+        let children = crate::tasks::list(&storage).await?;
+        let parent_key = parent_id.to_string();
+        assert!(
+            children
+                .iter()
+                .any(|task| task["parentId"] == parent_key && task["status"] == "COMPLETED")
+        );
+        let (parent, child) = storage.with_connection(|conn| {
+            conn.execute("INSERT INTO tasks(task_name,input_json,run_after) VALUES('scan_libraries','{}','2999-01-01')", [])?;
+            let parent = conn.last_insert_rowid();
+            conn.execute("INSERT INTO tasks(task_name,input_json,parent_id,run_after) VALUES('scan_library','{}',?1,'2999-01-01')", [parent])?;
+            Ok((parent,conn.last_insert_rowid()))
+        }).await?;
+        assert!(crate::tasks::cancel(&storage, parent).await?);
+        assert!(crate::tasks::cancelled(&storage, child).await);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn graphql_tasks_persist_deduplicate_and_cancel() -> Result<()> {
+        let dir = tempdir()?;
+        let mut state = test_app_state(
+            Catalog::from_files(Vec::new()),
+            dir.path().into(),
+            AuthSettings::from_users(Vec::new()),
+            SessionStore::new(24),
+        );
+        let storage = crate::storage::Storage::open(dir.path().join("test.db")).await?;
+        state.storage = Some(storage.clone());
+        let server = TestServer::new(router(state))?;
+        let request = serde_json::json!({"query":"mutation { enqueueTask(name: \"process_library\") { id status } }"});
+        let first = server.post("/api/graphql").json(&request).await.json::<Value>();
+        assert!(first.get("errors").is_none(), "{first}");
+        let second = server.post("/api/graphql").json(&request).await.json::<Value>();
+        assert_eq!(first, second);
+        let id = first["data"]["enqueueTask"]["id"].as_str().unwrap();
+        assert_eq!(crate::tasks::list(&storage).await?.len(), 1);
+        let cancel=server.post("/api/graphql").json(&serde_json::json!({"query":"mutation($id:ID!){cancelTask(id:$id)}","variables":{"id":id}})).await.json::<Value>();
+        assert_eq!(cancel["data"]["cancelTask"], true);
         Ok(())
     }
 }
