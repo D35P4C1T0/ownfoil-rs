@@ -78,12 +78,39 @@ pub async fn run(
     if name == "verify_file" {
         let before = std::fs::metadata(&source)?;
         let depth = management.verification.depth.clone();
-        let result = tokio::task::spawn_blocking(move || {
+        let cancelled = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let cancel_work = cancelled.clone();
+        let (progress_tx, mut progress_rx) = tokio::sync::watch::channel(0u64);
+        let mut work = tokio::task::spawn_blocking(move || {
             let keys = nx_archive::formats::Keyset::from_file(keys_path)
                 .map_err(|e| anyhow::anyhow!(e.to_string()))?;
-            verification::verify(&source_copy, &keys, &depth)
-        })
-        .await?;
+            verification::verify_with_progress(&source_copy, &keys, &depth, &mut |percent| {
+                if cancel_work.load(std::sync::atomic::Ordering::Relaxed) {
+                    return Err(std::io::Error::other("Task cancelled"));
+                }
+                progress_tx.send_if_modified(|previous| {
+                    if *previous == percent {
+                        return false;
+                    }
+                    *previous = percent;
+                    true
+                });
+                Ok(())
+            })
+        });
+        let mut interval = tokio::time::interval(std::time::Duration::from_millis(250));
+        let result = loop {
+            tokio::select! {
+                result = &mut work => break result?,
+                _ = interval.tick() => {
+                    if crate::tasks::cancelled(storage, task_id).await {
+                        cancelled.store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
+                    let percent = *progress_rx.borrow_and_update();
+                    crate::tasks::progress(storage, task_id, i64::try_from(percent)?).await?;
+                }
+            }
+        };
         let value=result.unwrap_or_else(|error|json!({"signatureValid":false,"hashValid":if management.verification.depth=="hash"{Some(false)}else{None},"hashModified":if management.verification.depth=="hash"{Some(false)}else{None},"verificationError":error.to_string()}));
         let _guard = state.scan_lock.lock().await;
         ensure!(!crate::tasks::cancelled(storage, task_id).await, "Task cancelled");
@@ -92,10 +119,7 @@ pub async fn run(
             before.len() == after.len() && before.modified()? == after.modified()?,
             "File changed during verification; scan and retry"
         );
-        let save = value.clone();
-        storage.with_connection(move |conn| {
-            conn.execute("UPDATE files SET signature_valid=?2,hash_valid=?3,hash_modified=?4,verification_error=?5,verified_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1",rusqlite::params![file_id,save["signatureValid"].as_bool(),save["hashValid"].as_bool(),save["hashModified"].as_bool(),save["verificationError"].as_str()])?;Ok(())
-        }).await?;
+        save_verification(storage, file_id, value.clone()).await?;
         if management.compression.enabled
             && !matches!(
                 file.relative_path.extension().and_then(|s| s.to_str()),
@@ -212,6 +236,19 @@ pub async fn run(
     Ok(json!({"path":target,"success":true}))
 }
 
+async fn save_verification(
+    storage: &crate::storage::Storage,
+    file_id: i64,
+    verdict: Value,
+) -> anyhow::Result<()> {
+    storage.with_connection(move |conn| {
+        // Signature-only checks must not erase the last full hash verdict.
+        conn.execute("UPDATE files SET signature_valid=?2,hash_valid=COALESCE(?3,hash_valid),hash_modified=COALESCE(?4,hash_modified),verification_error=?5,verified_at=strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id=?1",rusqlite::params![file_id,verdict["signatureValid"].as_bool(),verdict["hashValid"].as_bool(),verdict["hashModified"].as_bool(),verdict["verificationError"].as_str()])?;
+        Ok(())
+    }).await?;
+    Ok(())
+}
+
 fn sync_parent(path: &Path) -> std::io::Result<()> {
     #[cfg(not(unix))]
     let _ = path;
@@ -301,4 +338,43 @@ pub async fn recover(state: &AppState) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn signature_checks_preserve_hash_verdict_until_full_recheck() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let storage = crate::storage::Storage::open(dir.path().join("test.db")).await?;
+        let id = storage.with_connection(|conn| {
+            conn.execute("INSERT INTO libraries(path) VALUES('/games')", [])?;
+            conn.execute("INSERT INTO files(library_id,path,folder,name,ext,size) VALUES(1,'test.nsp','','test.nsp','nsp',1)", [])?;
+            Ok(conn.last_insert_rowid())
+        }).await?;
+        save_verification(
+            &storage,
+            id,
+            json!({"signatureValid":true,"hashValid":false,"hashModified":true}),
+        )
+        .await?;
+        save_verification(&storage, id, json!({"signatureValid":false})).await?;
+        let read = move |conn: &mut rusqlite::Connection| {
+            Ok(conn.query_row(
+                "SELECT signature_valid,hash_valid,hash_modified FROM files WHERE id=?1",
+                [id],
+                |r| Ok((r.get::<_, bool>(0)?, r.get::<_, bool>(1)?, r.get::<_, bool>(2)?)),
+            )?)
+        };
+        assert_eq!(storage.with_connection(read).await?, (false, false, true));
+        save_verification(
+            &storage,
+            id,
+            json!({"signatureValid":true,"hashValid":true,"hashModified":false}),
+        )
+        .await?;
+        assert_eq!(storage.with_connection(read).await?, (true, true, false));
+        Ok(())
+    }
 }

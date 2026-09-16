@@ -675,7 +675,7 @@ async fn fetch_source(
 
 fn http_client() -> reqwest::Client {
     reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(180))
+        .timeout(std::time::Duration::from_mins(3))
         .user_agent("ownfoil-rs/1.0 (TitleDB metadata fetcher)")
         .build()
         .unwrap_or_default()
@@ -695,7 +695,7 @@ struct RemoteZipReader {
 impl RemoteZipReader {
     fn open(url: String) -> Result<Self, TitleDbError> {
         let client = reqwest::blocking::Client::builder()
-            .timeout(std::time::Duration::from_secs(180))
+            .timeout(std::time::Duration::from_mins(3))
             .user_agent("ownfoil-rs/1.0 (TitleDB ranged ZIP reader)")
             .build()?;
         let response = client

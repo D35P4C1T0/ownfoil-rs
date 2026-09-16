@@ -940,6 +940,73 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn graphql_independent_roles_and_case_insensitive_title_lookup() -> Result<()> {
+        let auth = AuthSettings::from_users(Vec::new());
+        let sessions = SessionStore::new(24);
+        for (name, admin_access, shop_access) in [("admin", true, false), ("shop", false, true)] {
+            auth.upsert_hashed_user(
+                name.into(),
+                "unused-in-session-test".into(),
+                crate::auth::AuthRoles { admin_access, shop_access, backup_access: false },
+            );
+        }
+        let state = test_app_state(
+            Catalog::from_files(vec![ContentFile {
+                id: 1,
+                library_root: std::env::temp_dir(),
+                relative_path: "demo.nsp".into(),
+                name: "demo.nsp".into(),
+                size: 10,
+                title_id: Some("01000000000AB000".into()),
+                version: Some(0),
+                kind: ContentKind::Base,
+                identified_contents: Vec::new(),
+            }]),
+            std::env::temp_dir(),
+            auth,
+            sessions.clone(),
+        );
+        let server = TestServer::new(router(state))?;
+        let query = serde_json::json!({"query": "{ titles(owned: true) { total } apps { total items { id } } title(titleId: \"01000000000ab000\") { titleId } files { total } stats { totalTitles totalFiles appsByType { key } } }"});
+        for (name, shop) in [("admin", false), ("shop", true)] {
+            let cookie = format!("ownfoil_session={}", sessions.create(name.into()));
+            let response =
+                server.post("/api/graphql").add_header("Cookie", &cookie).json(&query).await;
+            response.assert_status_ok();
+            let body = response.json::<Value>();
+            assert!(body.get("errors").is_none(), "{body}");
+            let data = &body["data"];
+            assert_eq!(data["titles"]["total"], usize::from(shop));
+            assert_eq!(data["apps"]["total"], usize::from(shop));
+            assert_eq!(data["files"]["total"], usize::from(!shop));
+            assert_eq!(data["stats"]["totalTitles"], 0);
+            assert_eq!(data["stats"]["totalFiles"], 0);
+            if shop {
+                assert_eq!(data["title"]["titleId"], "01000000000AB000");
+                assert!(data["stats"]["appsByType"].is_array());
+            } else {
+                assert!(data["title"].is_null());
+                assert!(data["stats"]["appsByType"].is_null());
+            }
+            let tasks = server
+                .post("/api/graphql")
+                .add_header("Cookie", &cookie)
+                .json(
+                    &serde_json::json!({"query":"{ tasks(taskName: \"not_registered\") { id } }"}),
+                )
+                .await
+                .json::<Value>();
+            if shop {
+                assert!(tasks.get("errors").is_none(), "{tasks}");
+                assert_eq!(tasks["data"]["tasks"], serde_json::json!([]));
+            } else {
+                assert!(tasks["errors"].is_array());
+            }
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn graphql_requires_identity_on_public_shops_and_respects_roles_and_etags() -> Result<()>
     {
         let auth = AuthSettings::from_users(vec![AuthUser {
@@ -1242,5 +1309,209 @@ mod tests {
         let cancel=server.post("/api/graphql").json(&serde_json::json!({"query":"mutation($id:ID!){cancelTask(id:$id)}","variables":{"id":id}})).await.json::<Value>();
         assert_eq!(cancel["data"]["cancelTask"], true);
         Ok(())
+    }
+
+    #[tokio::test]
+    async fn settings_parity_shop_patches_preserve_secrets_and_omitted_fields() -> Result<()> {
+        let dir = tempdir()?;
+        let mut state = test_app_state(
+            Catalog::from_files(Vec::new()),
+            dir.path().into(),
+            AuthSettings::from_users(Vec::new()),
+            SessionStore::new(24),
+        );
+        state.settings_path = dir.path().join("settings.yaml");
+        let mut original = state.settings.read().await.clone();
+        original.shop.host = "shop.local".into();
+        original.shop.clients.tinfoil.clientCertKey = "test-private-key".into();
+        original.shop.clients.tinfoil.clientCertPub = "test-public-key".into();
+        original.shop.clients.tinfoil.hauth.insert("shop.local".into(), "test-tinfoil".into());
+        original.shop.clients.cyberfoil.hauth.insert("shop.local".into(), "test-cyberfoil".into());
+        original.shop.clients.cyberfoil.enabled = false;
+        original.shop.clients.sphaira.enabled = false;
+        *state.settings.write().await = original.clone();
+        let server = TestServer::new(router(state.clone()))?;
+        let redacted = server.get("/api/settings").await.json::<Value>();
+        assert_eq!(redacted["shop"]["clients"]["tinfoil"]["clientCertKey"], "");
+        assert_eq!(redacted["shop"]["clients"]["tinfoil"]["hauth"], serde_json::json!({}));
+        assert_eq!(redacted["shop"]["clients"]["cyberfoil"]["hauth"], serde_json::json!({}));
+        let response = server.post("/api/settings/shop").json(&redacted["shop"]).await;
+        assert_eq!(response.json::<Value>()["success"], true);
+        assert_eq!(*state.settings.read().await, original);
+        let patch = serde_json::json!({
+            "host": "https://new.local", "motd": "Updated", "public": true,
+            "clients": {
+                "tinfoil": {"encrypt": false, "hauth": {"new.local": "ignored"}, "clientCertKey": "ignored"},
+                "cyberfoil": {"enabled": true, "hauth": null}
+            }
+        });
+        let response = server.post("/api/settings/shop").json(&patch).await;
+        assert_eq!(response.status_code(), StatusCode::OK);
+        assert_eq!(response.json::<Value>()["success"], true);
+        original.shop.host = "new.local".into();
+        original.shop.motd = "Updated".into();
+        original.shop.public = true;
+        original.shop.clients.tinfoil.encrypt = false;
+        original.shop.clients.cyberfoil.enabled = true;
+        assert_eq!(*state.settings.read().await, original);
+        assert_eq!(crate::settings::Settings::load(&state.settings_path)?, original);
+        assert_eq!(state.shop.read().await.motd, "Updated");
+        assert!(!state.shop.read().await.encrypt);
+        let response = server.post("/api/settings/shop").json(&serde_json::json!({})).await;
+        assert_eq!(response.json::<Value>()["success"], true);
+        assert_eq!(*state.settings.read().await, original);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn settings_parity_shop_rejects_invalid_patches_and_save_failure() -> Result<()> {
+        let dir = tempdir()?;
+        let mut state = test_app_state(
+            Catalog::from_files(Vec::new()),
+            dir.path().into(),
+            AuthSettings::from_users(Vec::new()),
+            SessionStore::new(24),
+        );
+        state.settings_path = dir.path().join("settings.yaml");
+        let original = state.settings.read().await.clone();
+        original.save(&state.settings_path)?;
+        let persisted = std::fs::read(&state.settings_path)?;
+        let motd = state.shop.read().await.motd.clone();
+        let encrypt = state.shop.read().await.encrypt;
+        let server = TestServer::new(router(state.clone()))?;
+        for patch in [
+            serde_json::json!(null),
+            serde_json::json!([]),
+            serde_json::json!({"motd": false}),
+            serde_json::json!({"public": null}),
+            serde_json::json!({"clients": null}),
+            serde_json::json!({"clients": {"tinfoil": false}}),
+            serde_json::json!({"clients": {"sphaira": {"enabled": "false"}}}),
+        ] {
+            let response = server.post("/api/settings/shop").json(&patch).await;
+            assert_eq!(response.json::<Value>()["success"], false);
+            assert_eq!(*state.settings.read().await, original);
+            assert_eq!(std::fs::read(&state.settings_path)?, persisted);
+        }
+        std::fs::create_dir(state.settings_path.with_extension("yaml.tmp"))?;
+        let response = server
+            .post("/api/settings/shop")
+            .json(&serde_json::json!({"motd": "Not published", "clients": {"tinfoil": {"encrypt": !encrypt}}}))
+            .await;
+        assert_eq!(response.status_code(), StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(*state.settings.read().await, original);
+        assert_eq!(std::fs::read(&state.settings_path)?, persisted);
+        assert_eq!(state.shop.read().await.motd, motd);
+        assert_eq!(state.shop.read().await.encrypt, encrypt);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn login_parity_alias_next_remember_and_sessions() -> Result<()> {
+        let state = test_app_state(
+            Catalog::from_files(Vec::new()),
+            std::env::temp_dir(),
+            AuthSettings::from_users(vec![AuthUser {
+                username: "admin".into(),
+                password: "secret".into(),
+            }]),
+            SessionStore::new(24),
+        );
+        let existing = state.sessions.create("admin".into());
+        let server = TestServer::new(router(state.clone()))?;
+        for (route, name, remember) in [("/login", "user", "on"), ("/admin/login", "username", "")]
+        {
+            let response = server
+                .post(route)
+                .form(&[
+                    (name, "admin"),
+                    ("password", "secret"),
+                    ("next", "/settings?tab=shop"),
+                    ("remember", remember),
+                ])
+                .await;
+            assert_eq!(response.status_code(), StatusCode::SEE_OTHER);
+            assert_eq!(response.header("location"), "/settings?tab=shop");
+            let cookie = response.header("set-cookie");
+            let cookie = cookie.to_str()?;
+            for attribute in ["HttpOnly", "Secure", "SameSite=Lax", "Path=/"] {
+                assert!(cookie.contains(attribute), "{attribute}");
+            }
+            assert_eq!(cookie.contains("Max-Age=86400"), !remember.is_empty());
+            let cookie = cookie.split(';').next().unwrap();
+            let token = cookie.strip_prefix("ownfoil_session=").unwrap();
+            assert_eq!(state.sessions.get(token).as_deref(), Some("admin"));
+            assert_eq!(state.sessions.get(&existing).as_deref(), Some("admin"));
+            let page = server.get("/login?next=%2Fsettings").add_header("cookie", cookie).await;
+            assert_eq!(page.header("location"), "/settings");
+            server.get("/logout").add_header("cookie", cookie).await;
+            assert!(state.sessions.get(token).is_none());
+        }
+        let page = server.get("/login?next=%2Fsettings%3Ftab%3Dshop%26edit%3D1").await;
+        assert!(page.text().contains("name=\"next\" value=\"/settings?tab=shop&amp;edit=1\""));
+        let failed = server.post("/login").form(&[("user", "admin"), ("password", "wrong")]).await;
+        assert_eq!(failed.header("location"), "/admin/login?error=1");
+        assert!(failed.headers().get("set-cookie").is_none());
+        let forbidden = server
+            .post("/login")
+            .add_header("host", "shop.local")
+            .add_header("origin", "https://other.local")
+            .form(&[("user", "admin"), ("password", "secret")])
+            .await;
+        assert_eq!(forbidden.status_code(), StatusCode::FORBIDDEN);
+        assert!(forbidden.headers().get("set-cookie").is_none());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn login_parity_rejects_nonlocal_next() -> Result<()> {
+        let state = test_app_state(
+            Catalog::from_files(Vec::new()),
+            std::env::temp_dir(),
+            AuthSettings::from_users(vec![AuthUser {
+                username: "admin".into(),
+                password: "secret".into(),
+            }]),
+            SessionStore::new(24),
+        );
+        let server = TestServer::new(router(state))?;
+        for next in [
+            "",
+            "https://other.local",
+            "//other.local",
+            "/\\other.local",
+            "/%2fother.local",
+            "/%255cother.local",
+            "/\r\nother",
+            "relative",
+        ] {
+            let response = server
+                .post("/login")
+                .form(&[("user", "admin"), ("password", "secret"), ("next", next)])
+                .await;
+            assert_eq!(response.status_code(), StatusCode::SEE_OTHER);
+            assert_eq!(response.header("location"), "/admin");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn settings_parity_ui_checks_application_failure_and_posts_only_editable_shop_fields() {
+        let html = include_str!("settings.html");
+        let api = html.lines().find(|line| line.starts_with("const api=")).unwrap();
+        assert!(api.contains("if(d?.success===false)throw new Error"));
+        assert!(api.contains("'Operation failed'"));
+        let shop = html.lines().find(|line| line.starts_with("submit($('#shop')")).unwrap();
+        assert!(!shop.contains("settings.shop"));
+        assert!(!shop.contains("hauth"));
+        assert!(!shop.contains("clientCertKey"));
+        for selector in ["paths", "users"] {
+            let handler = html
+                .lines()
+                .find(|line| line.starts_with(&format!("$('#{selector}').onclick=")))
+                .unwrap();
+            assert!(handler.find("await api(").unwrap() < handler.find("status('").unwrap());
+            assert!(handler.contains("finally{e.target.disabled=false}"));
+        }
     }
 }

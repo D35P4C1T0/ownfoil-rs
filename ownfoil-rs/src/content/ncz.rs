@@ -22,13 +22,17 @@ fn crypt(bytes: &mut [u8], offset: u64, section: &Section) {
     if !matches!(section.crypto, 3 | 4) {
         return;
     }
-    let cipher = aes::Aes128::new((&section.key).into());
+    crypt_ctr(bytes, offset, &section.key, section.counter);
+}
+
+pub(super) fn crypt_ctr(bytes: &mut [u8], offset: u64, key: &[u8; 16], counter: [u8; 16]) {
+    let cipher = aes::Aes128::new(key.into());
     let mut at = 0;
     while at < bytes.len() {
         let position = offset + at as u64;
-        let mut counter = section.counter;
-        counter[8..].copy_from_slice(&(position >> 4).to_be_bytes());
-        let mut block = counter.into();
+        let mut block_counter = counter;
+        block_counter[8..].copy_from_slice(&(position >> 4).to_be_bytes());
+        let mut block: aes::Block = block_counter.into();
         cipher.encrypt_block(&mut block);
         let skip = (position % 16) as usize;
         let count = (16 - skip).min(bytes.len() - at);
@@ -147,6 +151,7 @@ pub fn compress(
     block: bool,
 ) -> anyhow::Result<()> {
     ensure!(entry.size > HEADER, "NCA too small to compress");
+    ensure!((14..=32).contains(&settings.block_size_exponent), "Invalid NCZ block size");
     let sections = sections(file, entry, keys, title_keys)?;
     let mut input = reader(file, entry)?;
     let mut header = vec![0; 0x4000];
@@ -298,6 +303,18 @@ impl Read for Blocks {
             return Err(std::io::Error::other("Truncated NCZ block"));
         }
         self.current_left -= n as u64;
+        if self.current_left == 0 {
+            let mut extra = [0];
+            if self
+                .current
+                .as_mut()
+                .ok_or_else(|| std::io::Error::other("Missing NCZ stream"))?
+                .read(&mut extra)?
+                != 0
+            {
+                return Err(std::io::Error::other("NCZ block exceeds declared size"));
+            }
+        }
         Ok(n)
     }
 }
@@ -359,11 +376,12 @@ pub fn decompress(file: &File, entry: &Entry, out: &mut dyn Write) -> anyhow::Re
         );
         let mut sizes = Vec::new();
         let mut sum = 0u64;
-        for _ in 0..count {
+        for index in 0..count {
             let mut bytes = [0; 4];
             input.read_exact(&mut bytes)?;
             let size = u32::from_le_bytes(bytes);
-            ensure!(size > 0, "Empty NCZ block");
+            let length = (total - index as u64 * block_size).min(block_size);
+            ensure!(size > 0 && u64::from(size) <= length, "Invalid NCZ block length");
             sum += u64::from(size);
             sizes.push(size);
         }
@@ -512,6 +530,32 @@ mod tests {
     }
 
     #[test]
+    fn ctr_matches_nx_archive_reader_at_unaligned_offsets() -> anyhow::Result<()> {
+        let key = [0x37; 16];
+        let ctr = 0x1234_5678_9abc_def0u64;
+        let expected = (0..79u8).collect::<Vec<_>>();
+        for offset in [0x4200u64, 0x4203, 0x420f] {
+            let mut counter = [0; 16];
+            counter[..8].copy_from_slice(&ctr.to_be_bytes());
+            let mut encrypted = expected.clone();
+            crypt_ctr(&mut encrypted, offset, &key, counter);
+            let mut bytes = vec![0; usize::try_from(offset)?];
+            bytes.extend(encrypted);
+            bytes.extend([0; 16]);
+            let mut reader = nx_archive::io::Aes128CtrReader::new(
+                std::io::Cursor::new(bytes),
+                offset,
+                ctr,
+                key.to_vec(),
+            );
+            let mut actual = vec![0; expected.len()];
+            reader.read_exact(&mut actual)?;
+            assert_eq!(actual, expected);
+        }
+        Ok(())
+    }
+
+    #[test]
     fn solid_and_block_roundtrip_plain_and_ctr_sections() -> anyhow::Result<()> {
         for ctr in [false, true] {
             for block in [false, true] {
@@ -560,6 +604,107 @@ mod tests {
             decompress(&file, &Entry { name: "bad.ncz".into(), offset: 0, size }, &mut Vec::new())
                 .is_err()
         );
+        Ok(())
+    }
+
+    fn block_fixture(
+        mutate: impl FnOnce(&mut Vec<u8>, usize) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
+        let (file, entry, keys, _) = fixture(false)?;
+        let mut out = tempfile::tempfile()?;
+        compress(
+            file.as_file(),
+            &entry,
+            &mut out,
+            &keys,
+            &TitleKeys::new(),
+            &CompressionSettings { level: 1, block_size_exponent: 20, ..Default::default() },
+            true,
+        )?;
+        let mut bytes = Vec::new();
+        out.rewind()?;
+        out.read_to_end(&mut bytes)?;
+        let count = u64_at(&bytes, 0x4008)? as usize;
+        let table = 0x4010 + count * 64 + 24;
+        mutate(&mut bytes, table)?;
+        out.set_len(0)?;
+        out.rewind()?;
+        out.write_all(&bytes)?;
+        out.rewind()?;
+        let size = out.metadata()?.len();
+        let entry = Entry { name: "bad.ncz".into(), offset: 0, size };
+        assert!(decompress(&out, &entry, &mut Vec::new()).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_zero_length_and_oversized_ncz_blocks() -> anyhow::Result<()> {
+        block_fixture(|bytes, table| {
+            bytes[table..table + 4].copy_from_slice(&0u32.to_le_bytes());
+            Ok(())
+        })?;
+        block_fixture(|bytes, table| {
+            bytes[table..table + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+            Ok(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_compressed_block_expansion_past_declared_length() -> anyhow::Result<()> {
+        block_fixture(|bytes, table| {
+            let total = usize::try_from(u64_at(bytes, table - 8)?)?;
+            let mut stream =
+                encoder(Vec::new(), &CompressionSettings { level: 1, ..Default::default() })?;
+            stream.write_all(&vec![0x42; total + 1])?;
+            let compressed = stream.finish()?;
+            bytes[table..table + 4]
+                .copy_from_slice(&u32::try_from(compressed.len())?.to_le_bytes());
+            bytes.truncate(table + 4);
+            bytes.extend(compressed);
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn rejects_raw_block_larger_than_remaining_output() -> anyhow::Result<()> {
+        block_fixture(|bytes, table| {
+            let total = usize::try_from(u64_at(bytes, table - 8)?)?;
+            bytes[table..table + 4].copy_from_slice(&u32::try_from(total + 1)?.to_le_bytes());
+            bytes.resize(table + 4 + total + 1, 0);
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn rejects_invalid_compression_exponent_before_writing() -> anyhow::Result<()> {
+        let (file, entry, keys, _) = fixture(false)?;
+        for exponent in [0, 13, 33, 64, u32::MAX] {
+            let mut out = tempfile::tempfile()?;
+            assert!(
+                compress(
+                    file.as_file(),
+                    &entry,
+                    &mut out,
+                    &keys,
+                    &TitleKeys::new(),
+                    &CompressionSettings { block_size_exponent: exponent, ..Default::default() },
+                    true
+                )
+                .is_err()
+            );
+            assert_eq!(out.metadata()?.len(), 0);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_ncz_block_total_mismatch() -> anyhow::Result<()> {
+        block_fixture(|bytes, table| {
+            let total = u64_at(bytes, table - 8)?;
+            bytes[table - 8..table].copy_from_slice(&(total + 1).to_le_bytes());
+            Ok(())
+        })?;
         Ok(())
     }
 }
