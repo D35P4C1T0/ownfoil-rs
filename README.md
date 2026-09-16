@@ -2,7 +2,7 @@
 
 Rust rewrite of [Ownfoil](https://github.com/a1ex4/ownfoil): a self-hosted Nintendo
 Switch game-shop library for Tinfoil, Aerofoil/CyberFoil, Sphaira, and browsers.
-Parity targets pinned upstream commit `7ca28d53f634c6d9cf30786590c966483e819c7b`.
+Parity work targets Ownfoil v2.4.1, pinned upstream commit `0cce4bbc684b30930b1576847c8c8fb5202114bf`.
 
 Current release: **v0.3.0**.
 
@@ -22,8 +22,12 @@ Current release: **v0.3.0**.
   browser library/setup/settings pages, and resumable byte-range downloads
 - Scrypt users with separate admin, shop, and backup roles; public or private shops
 - Ownfoil-compatible YAML settings and Docker volume layout
+- GraphQL queries and admin mutations; live task/worker events and statistics
+- Durable background jobs, configurable watcher, and TitleDB scheduling
+- Rust NSZ/XCZ solid and block compression, decompression, signature and hash
+  verification; no Python helpers or C Zstandard dependency
 
-See [ROADMAP.md](ROADMAP.md) for the completed feature ledger and remaining
+See [ROADMAP.md](ROADMAP.md) for the feature ledger and remaining
 hardware/deployment validation gates. Intentional differences are documented in
 [ownfoil-rs/PARITY_NOTES.md](ownfoil-rs/PARITY_NOTES.md).
 
@@ -76,7 +80,7 @@ docker compose down
 
 ## Native Run
 
-Rust 1.80 or newer is required.
+Rust 1.92 or newer is required.
 
 ```bash
 cargo run -p ownfoil-rs -- \

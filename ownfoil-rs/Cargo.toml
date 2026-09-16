@@ -2,7 +2,7 @@
 name = "ownfoil-rs"
 version = "0.3.0"
 edition = "2021"
-rust-version = "1.80"
+rust-version = "1.92"
 description = "Barebones CyberFoil-compatible Tinfoil game server in Rust"
 readme = "README.md"
 license = "MIT"
@@ -11,9 +11,13 @@ keywords = ["tinfoil", "cyberfoil", "shop", "switch", "server"]
 categories = ["command-line-utilities", "network-programming"]
 
 [dependencies]
+async-graphql = { version = "=7.0.17", default-features = false, features = ["dynamic-schema", "graphiql"] }
+async-graphql-derive = "=7.0.17"
+async-graphql-parser = "=7.0.17"
+async-graphql-value = "=7.0.17"
 anyhow = "1.0"
 aes = "0.8"
-axum = { version = "0.8", features = ["json", "macros", "multipart"] }
+axum = { version = "0.8", features = ["json", "macros", "multipart", "ws"] }
 axum-extra = { version = "0.12", features = ["cookie", "form"] }
 bytes = "1.0"
 base64 = "0.22"
@@ -49,9 +53,9 @@ rand = "0.8"
 rsa = { version = "0.9", features = ["pem", "sha2"] }
 scrypt = "0.11"
 sha2 = "0.10"
-zip = "2.2"
+zip = { version = "2.2", default-features = false, features = ["deflate"] }
 tokio-stream = { version = "0.1", features = ["sync"] }
-zstd = "0.13"
+structured-zstd = "=0.0.49"
 
 [dev-dependencies]
 axum-test = "18.2"

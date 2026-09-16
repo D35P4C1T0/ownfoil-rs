@@ -197,6 +197,23 @@ impl Storage {
         .await
     }
 
+    /// Resolve user and extracted metadata independently so deleting a custom
+    /// override restores extracted fields instead of deleting both sources.
+    pub async fn title_override_records(&self) -> Result<Vec<(String, serde_json::Value)>> {
+        self.with_connection(|conn| {
+            let mut stmt = conn.prepare("SELECT title_id,record FROM extracted_title_overrides UNION ALL SELECT title_id,record FROM title_overrides")?;
+            let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?,row.get::<_, String>(1)?)))?;
+            let mut records = std::collections::BTreeMap::<String, serde_json::Map<String, serde_json::Value>>::new();
+            for row in rows {
+                let (id, raw) = row?;
+                let record: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&raw).map_err(|error| rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(error)))?;
+                let merged = records.entry(id).or_default();
+                for (key,value) in record { if !value.is_null() { merged.insert(key,value); } }
+            }
+            Ok(records.into_iter().map(|(id,record)|(id,serde_json::Value::Object(record))).collect())
+        }).await
+    }
+
     pub async fn list_libraries(&self) -> Result<Vec<Library>> {
         self.with_connection(move |conn| {
             let mut stmt =
@@ -521,6 +538,8 @@ impl Storage {
                     params![library_id, relative_path],
                     |row| row.get(0),
                 )?;
+                let modified=std::fs::metadata(root.join(&file.relative_path)).ok().and_then(|m|m.modified().ok()).and_then(|t|t.duration_since(UNIX_EPOCH).ok()).map(|d|d.as_secs_f64());
+                transaction.execute("UPDATE files SET signature_valid=CASE WHEN mtime IS NOT ?2 THEN NULL ELSE signature_valid END,hash_valid=CASE WHEN mtime IS NOT ?2 THEN NULL ELSE hash_valid END,hash_modified=CASE WHEN mtime IS NOT ?2 THEN NULL ELSE hash_modified END,verification_error=CASE WHEN mtime IS NOT ?2 THEN NULL ELSE verification_error END,verified_at=CASE WHEN mtime IS NOT ?2 THEN NULL ELSE verified_at END,mtime=?2,added_at=COALESCE(added_at,strftime('%Y-%m-%dT%H:%M:%fZ','now')) WHERE id=?1",params![id,modified])?;
                 file.id = usize::try_from(id).unwrap_or(0);
                 file.library_root.clone_from(&root);
                 transaction.execute("DELETE FROM app_files WHERE file_id = ?1", params![id])?;
@@ -624,7 +643,7 @@ impl Storage {
         .await
     }
 
-    async fn with_connection<T, F>(&self, f: F) -> Result<T>
+    pub(crate) async fn with_connection<T, F>(&self, f: F) -> Result<T>
     where
         T: Send + 'static,
         F: FnOnce(&mut Connection) -> Result<T> + Send + 'static,
@@ -689,7 +708,7 @@ const fn app_type(kind: ContentKind) -> &'static str {
     }
 }
 
-fn base_title_id(app_id: &str, kind: ContentKind) -> String {
+pub fn base_title_id(app_id: &str, kind: ContentKind) -> String {
     let normalized = app_id.to_ascii_uppercase();
     match kind {
         ContentKind::Base | ContentKind::Unknown => normalized,
@@ -720,6 +739,17 @@ fn initialize_schema(conn: &mut Connection) -> Result<()> {
 fn create_schema(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(
         r"
+        CREATE TABLE IF NOT EXISTS tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT, task_name TEXT NOT NULL,
+            input_json TEXT NOT NULL DEFAULT '{}', output_json TEXT,
+            status TEXT NOT NULL DEFAULT 'pending', completion_pct INTEGER NOT NULL DEFAULT 0,
+            exit_code INTEGER, error_message TEXT,
+            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+            started_at TEXT, completed_at TEXT, run_after TEXT, parent_id INTEGER,
+            worker_id INTEGER, cancel_requested INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE TABLE IF NOT EXISTS title_overrides (title_id TEXT PRIMARY KEY, record TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS extracted_title_overrides (title_id TEXT PRIMARY KEY, record TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS libraries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             path TEXT NOT NULL UNIQUE,
@@ -791,16 +821,36 @@ fn ensure_schema_columns(conn: &Connection) -> rusqlite::Result<()> {
         ("identification_error", "TEXT"),
         ("identification_attempts", "INTEGER NOT NULL DEFAULT 0"),
         ("last_attempt", "INTEGER"),
+        ("signature_valid", "INTEGER"),
+        ("hash_valid", "INTEGER"),
+        ("hash_modified", "INTEGER"),
+        ("verification_error", "TEXT"),
+        ("verified_at", "TEXT"),
+        ("mtime", "REAL"),
+        ("added_at", "TEXT"),
+        ("organized", "INTEGER NOT NULL DEFAULT 0"),
         ("nb_content", "INTEGER NOT NULL DEFAULT 0"),
     ] {
         if !table_has_column(conn, "files", name)? {
             conn.execute_batch(&format!("ALTER TABLE files ADD COLUMN {name} {definition};"))?;
         }
     }
+    if !table_has_column(conn, "tasks", "cancel_requested")? {
+        conn.execute(
+            "ALTER TABLE tasks ADD COLUMN cancel_requested INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
+    if !table_has_column(conn, "tasks", "rerun_requested")? {
+        conn.execute(
+            "ALTER TABLE tasks ADD COLUMN rerun_requested INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER NOT NULL);\
-         INSERT INTO schema_version(version) SELECT 2 WHERE NOT EXISTS(SELECT 1 FROM schema_version);\
-         UPDATE schema_version SET version = 2;",
+         INSERT INTO schema_version(version) SELECT 3 WHERE NOT EXISTS(SELECT 1 FROM schema_version);\
+         UPDATE schema_version SET version = 3;",
     )
 }
 
@@ -815,20 +865,18 @@ fn table_has_column(conn: &Connection, table: &str, column: &str) -> rusqlite::R
     Ok(false)
 }
 
-fn backup_before_migration(path: &Path) -> std::io::Result<()> {
+fn backup_before_migration(path: &Path) -> Result<()> {
     if !path.exists() {
         return Ok(());
     }
-    let timestamp =
-        SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |duration| duration.as_secs());
-    let backup = path.with_file_name(format!(".backup_ownfoil_{timestamp}.db"));
-    fs_err_copy(path, &backup)
+    let backup = path.with_file_name(format!(".backup_ownfoil_{}.db", uuid::Uuid::new_v4()));
+    // VACUUM INTO includes committed WAL pages, unlike copying only the .db file.
+    let connection = Connection::open(path)?;
+    connection.execute("VACUUM INTO ?1", [backup.to_string_lossy().as_ref()])?;
+    Ok(())
 }
 
-fn fs_err_copy(source: &Path, destination: &Path) -> std::io::Result<()> {
-    std::fs::copy(source, destination).map(|_| ())
-}
-
+#[allow(clippy::too_many_lines)] // Keep schema migration atomic and reviewable in one place.
 fn migrate_upstream_schema(conn: &mut Connection) -> Result<()> {
     conn.execute_batch("PRAGMA foreign_keys = OFF;")?;
     let transaction = conn.transaction()?;
@@ -842,6 +890,15 @@ fn migrate_upstream_schema(conn: &mut Connection) -> Result<()> {
         ALTER TABLE users RENAME TO upstream_users;
         ",
     )?;
+    let migrate_tasks = table_has_column(&transaction, "tasks", "input_hash")?;
+    if migrate_tasks {
+        transaction.execute("ALTER TABLE tasks RENAME TO upstream_tasks", [])?;
+    }
+    let migrate_overrides = table_has_column(&transaction, "title_overrides", "source")?;
+    if migrate_overrides {
+        transaction
+            .execute("ALTER TABLE title_overrides RENAME TO upstream_title_overrides", [])?;
+    }
     create_schema(&transaction)?;
     transaction.execute_batch(
         r"
@@ -909,6 +966,79 @@ fn migrate_upstream_schema(conn: &mut Connection) -> Result<()> {
         SELECT id, user, password, admin_access, backup_access, shop_access, 1
         FROM upstream_users;
 
+        ",
+    )?;
+    for column in [
+        "organized",
+        "signature_valid",
+        "hash_valid",
+        "hash_modified",
+        "verification_error",
+        "verified_at",
+        "mtime",
+        "added_at",
+    ] {
+        if table_has_column(&transaction, "upstream_files", column)? {
+            transaction.execute_batch(&format!("UPDATE files SET {column}=(SELECT {column} FROM upstream_files WHERE upstream_files.id=files.id)"))?;
+        }
+    }
+    if migrate_tasks {
+        transaction.execute_batch("INSERT INTO tasks(id,parent_id,task_name,status,completion_pct,input_json,output_json,exit_code,error_message,run_after,created_at,started_at,completed_at,worker_id) SELECT id,parent_id,task_name,status,COALESCE(completion_pct,0),input_json,output_json,exit_code,error_message,strftime('%Y-%m-%dT%H:%M:%fZ',run_after),strftime('%Y-%m-%dT%H:%M:%fZ',created_at),strftime('%Y-%m-%dT%H:%M:%fZ',started_at),strftime('%Y-%m-%dT%H:%M:%fZ',completed_at),worker_id FROM upstream_tasks; DROP TABLE upstream_tasks;")?;
+    }
+    if migrate_overrides {
+        let mut stmt=transaction.prepare("SELECT * FROM upstream_title_overrides ORDER BY CASE source WHEN 'custom' THEN 0 ELSE 1 END")?;
+        let columns = stmt.column_names().iter().map(|s| (*s).to_string()).collect::<Vec<_>>();
+        let rows = stmt
+            .query_map([], |row| {
+                let mut record = serde_json::Map::new();
+                for (index, column) in columns.iter().enumerate() {
+                    if matches!(column.as_str(), "id" | "source") {
+                        continue;
+                    }
+                    if let Some(value) = row.get::<_, Option<String>>(index)? {
+                        let mut parts = column.split('_');
+                        let mut name = parts.next().unwrap_or_default().to_string();
+                        for part in parts {
+                            let mut chars = part.chars();
+                            if let Some(first) = chars.next() {
+                                name.extend(first.to_uppercase());
+                                name.extend(chars);
+                            }
+                        }
+                        if column == "nca_key" {
+                            name = "key".into();
+                        }
+                        let value = if matches!(
+                            column.as_str(),
+                            "category"
+                                | "rating_content"
+                                | "regions"
+                                | "languages"
+                                | "screenshots"
+                                | "ids"
+                        ) {
+                            serde_json::from_str(&value).unwrap_or(serde_json::Value::Null)
+                        } else {
+                            value.into()
+                        };
+                        record.insert(name, value);
+                    }
+                }
+                Ok((row.get::<_, String>("id")?, row.get::<_, String>("source")?, record))
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        for (id, source, record) in rows {
+            let table =
+                if source == "extract" { "extracted_title_overrides" } else { "title_overrides" };
+            transaction.execute(
+                &format!("INSERT INTO {table}(title_id,record) VALUES(?1,?2)"),
+                params![id, serde_json::Value::Object(record).to_string()],
+            )?;
+        }
+        transaction.execute("DROP TABLE upstream_title_overrides", [])?;
+    }
+    transaction.execute_batch(
+        r"
         DROP TABLE upstream_app_files;
         DROP TABLE upstream_apps;
         DROP TABLE upstream_files;
@@ -1160,7 +1290,7 @@ mod tests {
         {
             let conn = rusqlite::Connection::open(&path)?;
             conn.execute_batch(
-                r"
+                r#"
                 CREATE TABLE libraries (id INTEGER PRIMARY KEY, path TEXT, last_scan DATETIME);
                 CREATE TABLE files (
                     id INTEGER PRIMARY KEY, library_id INTEGER, filepath TEXT, folder TEXT,
@@ -1192,7 +1322,16 @@ mod tests {
                 INSERT INTO apps VALUES (8, 7, '0100000000000000', '0', 'BASE', 1);
                 INSERT INTO app_files VALUES (8, 42);
                 INSERT INTO users VALUES (3, 'admin', '$scrypt$hash', 1, 1, 1);
-                ",
+                ALTER TABLE files ADD COLUMN signature_valid BOOLEAN;
+                ALTER TABLE files ADD COLUMN hash_valid BOOLEAN;
+                ALTER TABLE files ADD COLUMN verified_at DATETIME;
+                UPDATE files SET signature_valid=1,hash_valid=1,verified_at='2026-09-15 10:00:00';
+                CREATE TABLE tasks (id INTEGER PRIMARY KEY,parent_id INTEGER,task_name TEXT,status TEXT,completion_pct INTEGER,input_json TEXT,input_hash TEXT,output_json TEXT,exit_code INTEGER,error_message TEXT,run_after DATETIME,created_at DATETIME,started_at DATETIME,completed_at DATETIME,worker_id INTEGER);
+                INSERT INTO tasks VALUES(9,NULL,'verify_file','pending',0,'{}','hash',NULL,NULL,NULL,'2026-09-16 10:00:00','2026-09-15 10:00:00',NULL,NULL,NULL);
+                CREATE TABLE title_overrides(id TEXT,source TEXT,name TEXT,languages TEXT,PRIMARY KEY(id,source));
+                INSERT INTO title_overrides VALUES('0100000000000000','extract','Extracted title','["en"]');
+                INSERT INTO title_overrides VALUES('0100000000000000','custom','Custom title',NULL);
+                "#,
             )?;
         }
 
@@ -1203,6 +1342,39 @@ mod tests {
         let user = storage.get_user(3).await?.ok_or(rusqlite::Error::QueryReturnedNoRows)?;
         assert_eq!(user.username, "admin");
         assert!(user.can_admin);
+        storage
+            .with_connection(|conn| {
+                let verdict: (i64, i64) = conn.query_row(
+                    "SELECT signature_valid,hash_valid FROM files WHERE id=42",
+                    [],
+                    |row| Ok((row.get(0)?, row.get(1)?)),
+                )?;
+                assert_eq!(verdict, (1, 1));
+                let deadline: String =
+                    conn.query_row("SELECT run_after FROM tasks WHERE id=9", [], |row| row.get(0))?;
+                assert_eq!(deadline, "2026-09-16T10:00:00.000Z");
+                let record: String = conn.query_row(
+                    "SELECT record FROM title_overrides WHERE title_id='0100000000000000'",
+                    [],
+                    |row| row.get(0),
+                )?;
+                assert!(record.contains("Custom title"));
+
+                Ok(())
+            })
+            .await?;
+
+        let merged = storage.title_override_records().await?;
+        assert_eq!(merged[0].1["name"], "Custom title");
+        assert_eq!(merged[0].1["languages"], serde_json::json!(["en"]));
+        storage
+            .with_connection(|conn| {
+                conn.execute("DELETE FROM title_overrides", [])?;
+                Ok(())
+            })
+            .await?;
+        let restored = storage.title_override_records().await?;
+        assert_eq!(restored[0].1["name"], "Extracted title");
         let has_backup = std::fs::read_dir(dir.path())
             .map_err(|source| rusqlite::Error::ToSqlConversionFailure(Box::new(source)))?
             .filter_map(std::result::Result::ok)

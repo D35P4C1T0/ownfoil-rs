@@ -1,0 +1,1729 @@
+[
+  {
+    "name": "StringFilter",
+    "kind": "input",
+    "description": "Text predicates. Populated operators AND together.",
+    "fields": [
+      {
+        "name": "eq",
+        "type": "String",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "contains",
+        "type": "String",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "in",
+        "type": "[String!]",
+        "args": [],
+        "default": null
+      }
+    ]
+  },
+  {
+    "name": "StringListFilter",
+    "kind": "input",
+    "description": "Membership in a JSON-encoded list column (`Title.category` and friends).\n\nThe column holds `[\"Adventure\",\"Puzzle\"]`, while the field it backs is a decoded\n`[String!]`. A StringFilter would filter the encoding rather than the elements -\n`eq: \"Adventure\"` could never match - so list columns get their own operators.",
+    "fields": [
+      {
+        "name": "has",
+        "type": "String",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "hasAny",
+        "type": "[String!]",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "hasAll",
+        "type": "[String!]",
+        "args": [],
+        "default": null
+      }
+    ]
+  },
+  {
+    "name": "IntFilter",
+    "kind": "input",
+    "description": "Numeric predicates. Populated operators AND together, so `gte` with `lte` is\na range.",
+    "fields": [
+      {
+        "name": "eq",
+        "type": "Int",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "gte",
+        "type": "Int",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "lte",
+        "type": "Int",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "in",
+        "type": "[Int!]",
+        "args": [],
+        "default": null
+      }
+    ]
+  },
+  {
+    "name": "BigIntFilter",
+    "kind": "input",
+    "description": "64-bit-capable variant of IntFilter, for byte sizes that overflow `Int`.",
+    "fields": [
+      {
+        "name": "eq",
+        "type": "BigInt",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "gte",
+        "type": "BigInt",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "lte",
+        "type": "BigInt",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "in",
+        "type": "[BigInt!]",
+        "args": [],
+        "default": null
+      }
+    ]
+  },
+  {
+    "name": "TitleFilter",
+    "kind": "input",
+    "description": "Predicates on a title. Every populated field ANDs with the others.",
+    "fields": [
+      {
+        "name": "titleId",
+        "type": "StringFilter",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "name",
+        "type": "StringFilter",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "publisher",
+        "type": "StringFilter",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "developer",
+        "type": "StringFilter",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "category",
+        "type": "StringListFilter",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "region",
+        "type": "StringFilter",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "language",
+        "type": "StringFilter",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "releaseDate",
+        "type": "StringFilter",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "parentId",
+        "type": "StringFilter",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "nsuId",
+        "type": "StringFilter",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "source",
+        "type": "StringFilter",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "haveBase",
+        "type": "Boolean",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "upToDate",
+        "type": "Boolean",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "complete",
+        "type": "Boolean",
+        "args": [],
+        "default": null
+      }
+    ]
+  },
+  {
+    "name": "AppType",
+    "kind": "enum",
+    "description": "What kind of content an app is. A closed set of three, so it is an enum rather\nthan a string: the values are exactly what the `app_type` column stores, which is\nwhat makes them safe to compare without translation.",
+    "fields": [
+      {
+        "name": "BASE"
+      },
+      {
+        "name": "UPDATE"
+      },
+      {
+        "name": "DLC"
+      }
+    ]
+  },
+  {
+    "name": "AppFilter",
+    "kind": "input",
+    "description": "Predicates on an app. Every populated field ANDs with the others.",
+    "fields": [
+      {
+        "name": "titleId",
+        "type": "StringFilter",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "appId",
+        "type": "StringFilter",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "appVersion",
+        "type": "IntFilter",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "appType",
+        "type": "AppType",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "owned",
+        "type": "Boolean",
+        "args": [],
+        "default": null
+      }
+    ]
+  },
+  {
+    "name": "VerificationStatus",
+    "kind": "enum",
+    "description": "One label for a file's verification verdicts. Derived from `signatureValid`,\n`hashValid` and `hashModified` rather than stored, so it can never disagree with\nthem. Declared best-to-worst then unknown, which is the order\n`stats.filesByVerificationStatus` reports.",
+    "fields": [
+      {
+        "name": "VALID"
+      },
+      {
+        "name": "REPACK"
+      },
+      {
+        "name": "MODIFIED"
+      },
+      {
+        "name": "CORRUPT"
+      },
+      {
+        "name": "SIGNATURE_OK"
+      },
+      {
+        "name": "SIGNATURE_FAILED"
+      },
+      {
+        "name": "UNVERIFIED"
+      }
+    ]
+  },
+  {
+    "name": "FileFilter",
+    "kind": "input",
+    "description": "Predicates on a file. Every populated field ANDs with the others.",
+    "fields": [
+      {
+        "name": "filepath",
+        "type": "StringFilter",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "filename",
+        "type": "StringFilter",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "folder",
+        "type": "StringFilter",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "extension",
+        "type": "StringFilter",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "identificationType",
+        "type": "StringFilter",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "identified",
+        "type": "Boolean",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "organized",
+        "type": "Boolean",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "multicontent",
+        "type": "Boolean",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "compressed",
+        "type": "Boolean",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "signatureValid",
+        "type": "Boolean",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "hashValid",
+        "type": "Boolean",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "hashModified",
+        "type": "Boolean",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "verificationStatus",
+        "type": "VerificationStatus",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "libraryId",
+        "type": "IntFilter",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "size",
+        "type": "BigIntFilter",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "downloadCount",
+        "type": "IntFilter",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "nbContent",
+        "type": "IntFilter",
+        "args": [],
+        "default": null
+      }
+    ]
+  },
+  {
+    "name": "OrderField",
+    "kind": "enum",
+    "description": "What to sort by. Not every member applies to every query, and one that does\nnot falls back to that query's default order rather than erroring - sorting\ntitles by DOWNLOAD_COUNT is meaningless, not invalid.",
+    "fields": [
+      {
+        "name": "ID"
+      },
+      {
+        "name": "NAME"
+      },
+      {
+        "name": "SIZE"
+      },
+      {
+        "name": "RELEASE_DATE"
+      },
+      {
+        "name": "DOWNLOAD_COUNT"
+      },
+      {
+        "name": "ADDED_AT"
+      },
+      {
+        "name": "VERSION"
+      }
+    ]
+  },
+  {
+    "name": "OrderDirection",
+    "kind": "enum",
+    "description": "Which way to sort. Null-placement is not reversed by DESC: rows with nothing\nto sort on stay last either way.",
+    "fields": [
+      {
+        "name": "ASC"
+      },
+      {
+        "name": "DESC"
+      }
+    ]
+  },
+  {
+    "name": "OrderBy",
+    "kind": "input",
+    "description": "How to sort a page. The query's own key is always appended as a tie-break, so\ntwo rows that compare equal keep a stable order across pages.",
+    "fields": [
+      {
+        "name": "field",
+        "type": "OrderField!",
+        "args": [],
+        "default": "ID"
+      },
+      {
+        "name": "direction",
+        "type": "OrderDirection!",
+        "args": [],
+        "default": "ASC"
+      }
+    ]
+  },
+  {
+    "name": "Ownership",
+    "kind": "object",
+    "description": "What the library holds for a title. Null on a title the library has never\nseen - which is a different statement from all three flags being false.",
+    "fields": [
+      {
+        "name": "haveBase",
+        "type": "Boolean!",
+        "args": []
+      },
+      {
+        "name": "upToDate",
+        "type": "Boolean!",
+        "args": []
+      },
+      {
+        "name": "complete",
+        "type": "Boolean!",
+        "args": []
+      }
+    ]
+  },
+  {
+    "name": "Library",
+    "kind": "object",
+    "description": "A configured library root. Admin only - the path is filesystem layout.",
+    "fields": [
+      {
+        "name": "id",
+        "type": "ID!",
+        "args": []
+      },
+      {
+        "name": "path",
+        "type": "String!",
+        "args": []
+      },
+      {
+        "name": "lastScan",
+        "type": "String",
+        "args": [],
+        "default": null
+      }
+    ]
+  },
+  {
+    "name": "TaskStatus",
+    "kind": "enum",
+    "description": "Every state a task row can be in. Cancelling deletes the row rather than\nadding a terminal state, so there is no CANCELLED member.",
+    "fields": [
+      {
+        "name": "PENDING"
+      },
+      {
+        "name": "RUNNING"
+      },
+      {
+        "name": "WAITING_FOR_CHILDREN"
+      },
+      {
+        "name": "COMPLETED"
+      },
+      {
+        "name": "FAILED"
+      }
+    ]
+  },
+  {
+    "name": "Task",
+    "kind": "object",
+    "description": "A queued, running or finished background job.",
+    "fields": [
+      {
+        "name": "id",
+        "type": "ID!",
+        "args": []
+      },
+      {
+        "name": "taskName",
+        "type": "String!",
+        "args": []
+      },
+      {
+        "name": "displayName",
+        "type": "String!",
+        "args": []
+      },
+      {
+        "name": "status",
+        "type": "TaskStatus!",
+        "args": []
+      },
+      {
+        "name": "completionPct",
+        "type": "Int!",
+        "args": [],
+        "default": 0
+      },
+      {
+        "name": "exitCode",
+        "type": "Int",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "errorMessage",
+        "type": "String",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "createdAt",
+        "type": "String",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "startedAt",
+        "type": "String",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "completedAt",
+        "type": "String",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "runAfter",
+        "type": "String",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "parentId",
+        "type": "ID",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "workerId",
+        "type": "Int",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "input",
+        "type": "String",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "output",
+        "type": "String",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "children",
+        "type": "[Task!]",
+        "args": [],
+        "description": "Sub-tasks spawned by this one, e.g. the per-library `scan_library` jobs\nunder a `scan_libraries`. Only hydrated when selected; null otherwise."
+      }
+    ]
+  },
+  {
+    "name": "Worker",
+    "kind": "object",
+    "description": "One task worker subprocess in the pool.",
+    "fields": [
+      {
+        "name": "id",
+        "type": "Int!",
+        "args": []
+      },
+      {
+        "name": "pid",
+        "type": "Int",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "alive",
+        "type": "Boolean!",
+        "args": [],
+        "default": false
+      },
+      {
+        "name": "currentTask",
+        "type": "Task",
+        "args": [],
+        "default": null
+      }
+    ]
+  },
+  {
+    "name": "AppTypeCount",
+    "kind": "object",
+    "description": "Apps of one type, split by whether the library holds them. Both figures rather\nthan one: a bucket counting only owned apps cannot say what is missing, and one\ncounting everything cannot say what is there.",
+    "fields": [
+      {
+        "name": "key",
+        "type": "String!",
+        "args": []
+      },
+      {
+        "name": "count",
+        "type": "Int!",
+        "args": []
+      },
+      {
+        "name": "owned",
+        "type": "Int!",
+        "args": [],
+        "default": 0
+      }
+    ]
+  },
+  {
+    "name": "SizedCountByKey",
+    "kind": "object",
+    "description": "A bucket whose rows are files, so the bytes they account for are meaningful.",
+    "fields": [
+      {
+        "name": "key",
+        "type": "String!",
+        "args": []
+      },
+      {
+        "name": "count",
+        "type": "Int!",
+        "args": []
+      },
+      {
+        "name": "size",
+        "type": "BigInt!",
+        "args": [],
+        "default": 0
+      }
+    ]
+  },
+  {
+    "name": "VerificationStatusCount",
+    "kind": "object",
+    "description": "Files sharing one verification verdict. Typed rather than a `SizedCountByKey`\nso the bucket can be handed straight back to `files(filter: {verificationStatus:})`\nwithout a string round-trip.",
+    "fields": [
+      {
+        "name": "status",
+        "type": "VerificationStatus!",
+        "args": []
+      },
+      {
+        "name": "count",
+        "type": "Int!",
+        "args": []
+      },
+      {
+        "name": "size",
+        "type": "BigInt!",
+        "args": [],
+        "default": 0
+      }
+    ]
+  },
+  {
+    "name": "LibraryStats",
+    "kind": "object",
+    "description": "Library-wide aggregates, for dashboards. Each field is computed only when\nselected, so asking for one count does not pay for the others. The file-level\nfigures are admin only and read 0 for any other role.",
+    "fields": [
+      {
+        "name": "totalFiles",
+        "type": "Int!",
+        "args": [],
+        "default": 0
+      },
+      {
+        "name": "totalSize",
+        "type": "BigInt!",
+        "args": [],
+        "default": 0
+      },
+      {
+        "name": "identifiedFiles",
+        "type": "Int!",
+        "args": [],
+        "default": 0
+      },
+      {
+        "name": "unidentifiedFiles",
+        "type": "Int!",
+        "args": [],
+        "default": 0
+      },
+      {
+        "name": "totalTitles",
+        "type": "Int!",
+        "args": [],
+        "default": 0
+      },
+      {
+        "name": "ownedTitles",
+        "type": "Int!",
+        "args": [],
+        "default": 0
+      },
+      {
+        "name": "completeTitles",
+        "type": "Int!",
+        "args": [],
+        "default": 0
+      },
+      {
+        "name": "upToDateTitles",
+        "type": "Int!",
+        "args": [],
+        "default": 0
+      },
+      {
+        "name": "totalApps",
+        "type": "Int!",
+        "args": [],
+        "default": 0
+      },
+      {
+        "name": "ownedApps",
+        "type": "Int!",
+        "args": [],
+        "default": 0
+      },
+      {
+        "name": "filesByExtension",
+        "type": "[SizedCountByKey!]",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "appsByType",
+        "type": "[AppTypeCount!]",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "filesByLibrary",
+        "type": "[SizedCountByKey!]",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "filesByVerificationStatus",
+        "type": "[VerificationStatusCount!]",
+        "args": [],
+        "default": null
+      }
+    ]
+  },
+  {
+    "name": "File",
+    "kind": "object",
+    "description": "One file on disk that ownfoil tracks. The whole type is admin only - the\n`files` query returns nothing at all for any other role.",
+    "fields": [
+      {
+        "name": "id",
+        "type": "ID!",
+        "args": []
+      },
+      {
+        "name": "libraryId",
+        "type": "Int!",
+        "args": []
+      },
+      {
+        "name": "filename",
+        "type": "String!",
+        "args": []
+      },
+      {
+        "name": "folder",
+        "type": "String",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "extension",
+        "type": "String",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "size",
+        "type": "BigInt",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "compressed",
+        "type": "Boolean!",
+        "args": [],
+        "default": false
+      },
+      {
+        "name": "multicontent",
+        "type": "Boolean!",
+        "args": [],
+        "default": false
+      },
+      {
+        "name": "nbContent",
+        "type": "Int!",
+        "args": [],
+        "default": 0
+      },
+      {
+        "name": "downloadCount",
+        "type": "Int!",
+        "args": [],
+        "default": 0
+      },
+      {
+        "name": "identified",
+        "type": "Boolean!",
+        "args": [],
+        "default": false
+      },
+      {
+        "name": "identificationType",
+        "type": "String",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "identificationError",
+        "type": "String",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "identificationAttempts",
+        "type": "Int!",
+        "args": [],
+        "default": 0
+      },
+      {
+        "name": "organized",
+        "type": "Boolean!",
+        "args": [],
+        "default": false
+      },
+      {
+        "name": "signatureValid",
+        "type": "Boolean",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "hashValid",
+        "type": "Boolean",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "hashModified",
+        "type": "Boolean",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "verificationError",
+        "type": "String",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "verifiedAt",
+        "type": "String",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "mtime",
+        "type": "Float",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "addedAt",
+        "type": "String",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "filepath",
+        "type": "String",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "verificationStatus",
+        "type": "VerificationStatus!",
+        "args": [],
+        "description": "`signatureValid`, `hashValid` and `hashModified` read as one label - which of\nthem matters depends on the others, and a client that reasons about them\nseparately gets it wrong. `filter: {verificationStatus:}` selects on the same\nrule."
+      },
+      {
+        "name": "library",
+        "type": "Library",
+        "args": [],
+        "description": "The library root this file was found under. Admin only."
+      },
+      {
+        "name": "apps",
+        "type": "[App!]",
+        "args": [
+          {
+            "name": "appType",
+            "type": "[AppType!]",
+            "default": null
+          },
+          {
+            "name": "filter",
+            "type": "AppFilter",
+            "default": null
+          }
+        ],
+        "description": "The apps this file carries, across the app_files m2m. Usually one; more for\na multicontent bundle. Admin only, and only hydrated under the top-level\n`files` query.\n\nUnlike `Title.apps` this takes no `owned` argument: an app is owned exactly\nwhen it has files, so everything reachable from a file is owned by\nconstruction and the filter could only ever return all of them or none.\n`filter: {owned: ...}` is still accepted here - the input type is shared with\n`Title.apps` - and is subject to the same tautology."
+      }
+    ]
+  },
+  {
+    "name": "AppVersion",
+    "kind": "object",
+    "description": "One known version of the content an app represents, with ownership attached.",
+    "fields": [
+      {
+        "name": "version",
+        "type": "Int!",
+        "args": []
+      },
+      {
+        "name": "owned",
+        "type": "Boolean!",
+        "args": []
+      },
+      {
+        "name": "releaseDate",
+        "type": "String",
+        "args": [],
+        "default": null
+      }
+    ]
+  },
+  {
+    "name": "TitledbVersion",
+    "kind": "object",
+    "description": "A version titledb knows about, with no ownership attached - this is catalogue\ndata, and it exists for titles the library has never seen.",
+    "fields": [
+      {
+        "name": "version",
+        "type": "Int!",
+        "args": []
+      },
+      {
+        "name": "releaseDate",
+        "type": "String",
+        "args": [],
+        "default": null
+      }
+    ]
+  },
+  {
+    "name": "TitledbDlc",
+    "kind": "object",
+    "description": "A DLC titledb attributes to a title, again independent of ownership.",
+    "fields": [
+      {
+        "name": "appId",
+        "type": "String!",
+        "args": []
+      },
+      {
+        "name": "version",
+        "type": "Int",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "titledb",
+        "type": "Title",
+        "args": [],
+        "default": null
+      }
+    ]
+  },
+  {
+    "name": "App",
+    "kind": "object",
+    "description": "One piece of installable content: a base game, an update, or a DLC. An app is\na (application id, version) pair, and it is `owned` exactly when a file carries\nit.",
+    "fields": [
+      {
+        "name": "id",
+        "type": "ID!",
+        "args": []
+      },
+      {
+        "name": "titleId",
+        "type": "String!",
+        "args": []
+      },
+      {
+        "name": "appId",
+        "type": "String!",
+        "args": []
+      },
+      {
+        "name": "appVersion",
+        "type": "Int!",
+        "args": []
+      },
+      {
+        "name": "appType",
+        "type": "AppType!",
+        "args": []
+      },
+      {
+        "name": "owned",
+        "type": "Boolean!",
+        "args": []
+      },
+      {
+        "name": "releaseDate",
+        "type": "String",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "title",
+        "type": "Title",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "versions",
+        "type": "[AppVersion!]",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "files",
+        "type": "[File!]",
+        "args": [
+          {
+            "name": "filter",
+            "type": "FileFilter",
+            "default": null
+          }
+        ],
+        "description": "The files that carry this app - more than one when the same content sits in\nthe library twice. Admin only: null for any other role, and null for apps\nreached as a file's back-link (the recursion stops there)."
+      },
+      {
+        "name": "titledb",
+        "type": "Title",
+        "args": [],
+        "description": "Titledb entry keyed by this app's app_id (the DLC's own metadata for\nDLC apps, the parent title's metadata for BASE apps, often null for\nUPDATE apps not present in titledb). Not hydrated for apps reached as a\nfile's back-link under `apps { files { apps } }`."
+      }
+    ]
+  },
+  {
+    "name": "Title",
+    "kind": "object",
+    "description": "A game, as the titledb catalogue describes it - which exists whether or not\nanything is owned. Everything from `name` down is metadata passed through from\ntitledb, merged across its sources at import time; ownership lives on\n`ownership` and `apps`.",
+    "fields": [
+      {
+        "name": "titleId",
+        "type": "ID!",
+        "args": []
+      },
+      {
+        "name": "source",
+        "type": "String!",
+        "args": []
+      },
+      {
+        "name": "name",
+        "type": "String",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "bannerUrl",
+        "type": "String",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "iconUrl",
+        "type": "String",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "frontBoxArt",
+        "type": "String",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "description",
+        "type": "String",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "intro",
+        "type": "String",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "developer",
+        "type": "String",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "publisher",
+        "type": "String",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "releaseDate",
+        "type": "String",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "category",
+        "type": "[String!]",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "isDemo",
+        "type": "String",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "nsuId",
+        "type": "String",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "numberOfPlayers",
+        "type": "String",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "parentId",
+        "type": "String",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "rank",
+        "type": "String",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "rating",
+        "type": "String",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "ratingContent",
+        "type": "[String!]",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "region",
+        "type": "String",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "regions",
+        "type": "[String!]",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "languages",
+        "type": "[String!]",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "language",
+        "type": "String",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "rightsId",
+        "type": "String",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "screenshots",
+        "type": "[String!]",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "size",
+        "type": "String",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "version",
+        "type": "String",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "ncaKey",
+        "type": "String",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "ids",
+        "type": "[String!]",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "ownership",
+        "type": "Ownership",
+        "args": [],
+        "default": null
+      },
+      {
+        "name": "availableVersions",
+        "type": "[TitledbVersion!]",
+        "args": [],
+        "description": "Every version titledb knows for this title, ascending. Unlike\n`apps { versions }` this does not need the title to be in the library, so a\ncatalogue or wishlist view can show what a title would involve owning."
+      },
+      {
+        "name": "availableDlc",
+        "type": "[TitledbDlc!]",
+        "args": [],
+        "description": "Every DLC titledb attributes to this title, whether or not it is owned -\nthe answer to \"what am I missing\" for a title the library has never seen."
+      },
+      {
+        "name": "apps",
+        "type": "[App!]",
+        "args": [
+          {
+            "name": "owned",
+            "type": "Boolean",
+            "default": null
+          },
+          {
+            "name": "appType",
+            "type": "[AppType!]",
+            "default": null
+          },
+          {
+            "name": "filter",
+            "type": "AppFilter",
+            "default": null
+          }
+        ],
+        "description": "The base, update and DLC apps ownfoil tracks for this title - including\nunowned ones, which is what makes \"what am I missing\" answerable. Null when\nnot hydrated on this path or not exposed to this role."
+      }
+    ]
+  },
+  {
+    "name": "TitleConnection",
+    "kind": "object",
+    "description": "One page of titles.",
+    "fields": [
+      {
+        "name": "total",
+        "type": "Int!",
+        "args": []
+      },
+      {
+        "name": "items",
+        "type": "[Title!]!",
+        "args": []
+      }
+    ]
+  },
+  {
+    "name": "AppConnection",
+    "kind": "object",
+    "description": "One page of apps.",
+    "fields": [
+      {
+        "name": "total",
+        "type": "Int!",
+        "args": []
+      },
+      {
+        "name": "items",
+        "type": "[App!]!",
+        "args": []
+      }
+    ]
+  },
+  {
+    "name": "FileConnection",
+    "kind": "object",
+    "description": "One page of files.",
+    "fields": [
+      {
+        "name": "total",
+        "type": "Int!",
+        "args": []
+      },
+      {
+        "name": "items",
+        "type": "[File!]!",
+        "args": []
+      }
+    ]
+  },
+  {
+    "name": "Mutation",
+    "kind": "object",
+    "description": "Library-domain writes: enqueue work, cancel work, edit title metadata.\n\nDeliberately narrow - settings, users and the keys upload stay on REST, being\nform-and-file shaped rather than graph shaped. Unlike the query side, a write a\nrole may not perform raises rather than returning null: a silently ignored write\nis not a partial result, it is a lie. All of these require admin.",
+    "fields": [
+      {
+        "name": "enqueueTask",
+        "type": "Task",
+        "args": [
+          {
+            "name": "name",
+            "type": "String!"
+          },
+          {
+            "name": "input",
+            "type": "String",
+            "default": null
+          }
+        ],
+        "description": "Enqueue any registered task. `input` is a JSON object string, because the\npayload shape differs per task name. Enqueuing a duplicate returns the\nexisting task rather than creating a second one."
+      },
+      {
+        "name": "cancelTask",
+        "type": "Boolean!",
+        "args": [
+          {
+            "name": "id",
+            "type": "ID!"
+          }
+        ],
+        "description": "False when the task is unknown or already in a terminal state."
+      },
+      {
+        "name": "dismissTask",
+        "type": "Boolean!",
+        "args": [
+          {
+            "name": "id",
+            "type": "ID!"
+          }
+        ],
+        "description": "Clear one failed task. Failed tasks are kept so a failure survives a page\nreload, so this is how a task queue gets tidied once its failures have been\nread. False when the task is unknown or has not failed - a running or queued\ntask is `cancelTask`'s job, not this one."
+      },
+      {
+        "name": "purgeFailedTasks",
+        "type": "Int!",
+        "args": [],
+        "description": "Clear every failed task at once, returning how many were removed. Zero when\nthere was nothing to clear, which is not an error."
+      },
+      {
+        "name": "scanLibrary",
+        "type": "Task",
+        "args": [
+          {
+            "name": "path",
+            "type": "String",
+            "default": null
+          }
+        ],
+        "description": "Scan one library, or every configured library when `path` is omitted. The\nall-libraries form returns the last task enqueued."
+      },
+      {
+        "name": "compressFile",
+        "type": "Task",
+        "args": [
+          {
+            "name": "fileId",
+            "type": "ID!"
+          }
+        ],
+        "description": "Compress one file to NSZ/XCZ. Same guards as the REST endpoint."
+      },
+      {
+        "name": "decompressFile",
+        "type": "Task",
+        "args": [
+          {
+            "name": "fileId",
+            "type": "ID!"
+          }
+        ],
+        "description": "Decompress one file back to NSP/XCI."
+      },
+      {
+        "name": "verifyFile",
+        "type": "Task",
+        "args": [
+          {
+            "name": "fileId",
+            "type": "ID!"
+          }
+        ],
+        "description": "Re-verify one file at the configured depth. The stored verdicts are cleared\nfirst, so this re-checks a file that already has them rather than no-opping."
+      },
+      {
+        "name": "setTitleOverride",
+        "type": "Title",
+        "args": [
+          {
+            "name": "titleId",
+            "type": "ID!"
+          },
+          {
+            "name": "record",
+            "type": "String!"
+          }
+        ],
+        "description": "Write user-authored metadata for a title, winning over the downloaded\ntitledb values field by field. `record` is a JSON object of the same shape the\nREST endpoint takes. Re-identification is enqueued, as there too."
+      },
+      {
+        "name": "deleteTitleOverride",
+        "type": "Boolean!",
+        "args": [
+          {
+            "name": "titleId",
+            "type": "ID!"
+          }
+        ],
+        "description": "Drop the override, restoring the next metadata source down."
+      }
+    ]
+  },
+  {
+    "name": "Query",
+    "kind": "object",
+    "description": "Read access to the library and the titledb catalogue.\n\nEvery query is role-gated rather than hidden: a role that may not read something\ngets an empty page or a null, not an error. `titles` and `apps` need shop access;\n`files`, `libraries`, `tasks` and the file-level figures in `stats` need admin.",
+    "fields": [
+      {
+        "name": "title",
+        "type": "Title",
+        "args": [
+          {
+            "name": "titleId",
+            "type": "ID!"
+          }
+        ],
+        "description": "One title by id, whether it is owned or only in the catalogue. Null when no\ntitle carries that id. `ownership` is null for a catalogue-only title."
+      },
+      {
+        "name": "titles",
+        "type": "TitleConnection!",
+        "args": [
+          {
+            "name": "owned",
+            "type": "Boolean",
+            "default": null
+          },
+          {
+            "name": "filter",
+            "type": "TitleFilter",
+            "default": null
+          },
+          {
+            "name": "search",
+            "type": "String",
+            "default": null
+          },
+          {
+            "name": "orderBy",
+            "type": "OrderBy",
+            "default": null
+          },
+          {
+            "name": "page",
+            "type": "Int!",
+            "default": 1
+          },
+          {
+            "name": "pageSize",
+            "type": "Int!",
+            "default": 50
+          }
+        ],
+        "description": "A page of titles, from the catalogue and the library together. Requires\nshop access; returns an empty page otherwise."
+      },
+      {
+        "name": "apps",
+        "type": "AppConnection!",
+        "args": [
+          {
+            "name": "owned",
+            "type": "Boolean",
+            "default": null
+          },
+          {
+            "name": "appType",
+            "type": "[AppType!]",
+            "default": null
+          },
+          {
+            "name": "filter",
+            "type": "AppFilter",
+            "default": null
+          },
+          {
+            "name": "upToDate",
+            "type": "Boolean",
+            "default": null
+          },
+          {
+            "name": "complete",
+            "type": "Boolean",
+            "default": null
+          },
+          {
+            "name": "search",
+            "type": "String",
+            "default": null
+          },
+          {
+            "name": "orderBy",
+            "type": "OrderBy",
+            "default": null
+          },
+          {
+            "name": "groupByAppId",
+            "type": "Boolean!",
+            "default": false
+          },
+          {
+            "name": "page",
+            "type": "Int!",
+            "default": 1
+          },
+          {
+            "name": "pageSize",
+            "type": "Int!",
+            "default": 100
+          }
+        ],
+        "description": "A page of apps: base games, updates and DLC, owned or merely known.\nRequires shop access; returns an empty page otherwise.\n\n`groupByAppId` collapses an app id's versions into one item, so a page is\na page of distinct apps rather than of (app id, version) rows. The item is the\ngroup's highest-version row - a real app, not a blend of several - except for\n`owned`, which is group-level: true when any version is owned. `upToDate` and\n`complete` are title-level notions: `upToDate` asks the title's flag for BASE\napps and \"is the highest known version owned\" for the others, while `complete`\nonly ever matches BASE apps."
+      },
+      {
+        "name": "files",
+        "type": "FileConnection!",
+        "args": [
+          {
+            "name": "filter",
+            "type": "FileFilter",
+            "default": null
+          },
+          {
+            "name": "orderBy",
+            "type": "OrderBy",
+            "default": null
+          },
+          {
+            "name": "page",
+            "type": "Int!",
+            "default": 1
+          },
+          {
+            "name": "pageSize",
+            "type": "Int!",
+            "default": 100
+          }
+        ],
+        "description": "A page of tracked files. Admin only - every other role gets an empty page,\nsince file paths are filesystem layout.\n\n`orderBy: {field: ADDED_AT, direction: DESC}` is the \"recently added\" view;\nSIZE and DOWNLOAD_COUNT sort the obvious way. A field this query has no column\nfor falls back to id order rather than erroring."
+      },
+      {
+        "name": "app",
+        "type": "App",
+        "args": [
+          {
+            "name": "id",
+            "type": "ID!"
+          }
+        ],
+        "description": "One app by primary key, including an item returned by\n`apps(groupByAppId: true)` - a grouped item is the group's highest-version row,\nnot a composite, so its `id` resolves back to that same app."
+      },
+      {
+        "name": "file",
+        "type": "File",
+        "args": [
+          {
+            "name": "id",
+            "type": "ID!"
+          }
+        ],
+        "description": "One file by primary key. Admin only - null for any other role, which is\nindistinguishable from the file not existing, deliberately."
+      },
+      {
+        "name": "libraries",
+        "type": "[Library!]!",
+        "args": [],
+        "description": "The configured library roots. Admin only; empty for any other role."
+      },
+      {
+        "name": "tasks",
+        "type": "[Task!]!",
+        "args": [
+          {
+            "name": "status",
+            "type": "TaskStatus",
+            "default": null
+          },
+          {
+            "name": "taskName",
+            "type": "String",
+            "default": null
+          },
+          {
+            "name": "includeChildren",
+            "type": "Boolean!",
+            "default": false
+          },
+          {
+            "name": "limit",
+            "type": "Int!",
+            "default": 50
+          }
+        ],
+        "description": "Background jobs, newest first. Admin only; empty for any other role.\nTop-level only unless `includeChildren`. An unregistered `taskName` is an\nerror rather than an empty list, so a typo does not read as \"nothing has\nrun\"."
+      },
+      {
+        "name": "task",
+        "type": "Task",
+        "args": [
+          {
+            "name": "id",
+            "type": "ID!"
+          }
+        ],
+        "description": "One task by id, with its children when selected. Admin only - null for any\nother role."
+      },
+      {
+        "name": "workers",
+        "type": "[Worker!]!",
+        "args": [],
+        "description": "The task worker pool, ordered by worker number, each with the task it is\nrunning now. Admin only; empty for any other role, and empty in a process that\ndoes not own the pool."
+      },
+      {
+        "name": "stats",
+        "type": "LibraryStats!",
+        "args": [],
+        "description": "Library-wide aggregates for dashboards. Every field is computed only when\nselected, so asking for one count does not pay for the others. File-level\nfigures are admin only and read zero for other roles."
+      }
+    ]
+  }
+]

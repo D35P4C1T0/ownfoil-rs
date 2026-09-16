@@ -89,3 +89,19 @@ mod tests {
         assert!(!status.missing_keys.contains(&"master_key_00".to_string()));
     }
 }
+
+#[cfg(test)]
+mod local_validation {
+    #[test]
+    #[ignore = "requires OWNFOIL_TEST_KEYS pointing to a local key file"]
+    fn local_keys_load_without_disclosing_material() -> anyhow::Result<()> {
+        let path = std::env::var_os("OWNFOIL_TEST_KEYS")
+            .ok_or_else(|| anyhow::anyhow!("Set OWNFOIL_TEST_KEYS"))?;
+        let status = super::inspect(std::path::Path::new(&path));
+        anyhow::ensure!(status.valid_keys == Some(true), "Key file format validation failed");
+        let keys = nx_archive::formats::Keyset::from_file(path)
+            .map_err(|_| anyhow::anyhow!("Key loading failed"))?;
+        anyhow::ensure!(keys.header_key().is_some(), "NCA header key unavailable");
+        Ok(())
+    }
+}

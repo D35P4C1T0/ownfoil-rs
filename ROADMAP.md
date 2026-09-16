@@ -1,11 +1,11 @@
 # Ownfoil Feature-Parity Roadmap
 
-Target: [`a1ex4/ownfoil@7ca28d53f634c6d9cf30786590c966483e819c7b`](https://github.com/a1ex4/ownfoil/commit/7ca28d53f634c6d9cf30786590c966483e819c7b).
+Target: [`a1ex4/ownfoil@0cce4bbc684b30930b1576847c8c8fb5202114bf`](https://github.com/a1ex4/ownfoil/commit/0cce4bbc684b30930b1576847c8c8fb5202114bf), v2.4.1.
 
-The pinned upstream feature set is implemented. This file now records completed
-scope and the release-validation work that cannot be proven by unit tests alone.
-Advancing the upstream pin requires a fresh source diff and new compatibility
-fixtures.
+The prior ledger covered commit `7ca28d53`. The current parity update adds
+GraphQL, task workers, realtime events, statistics, metadata overrides, and native
+content processing. Full parity is not yet established. See
+[parity notes](ownfoil-rs/PARITY_NOTES.md) for remaining differences and validation.
 
 Status: `[x]` implemented and tested, `[~]` implemented but external validation
 remains, `[ ]` not implemented.

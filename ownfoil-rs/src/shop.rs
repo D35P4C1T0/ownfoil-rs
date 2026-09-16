@@ -115,16 +115,10 @@ pub fn identify_client(headers: &HeaderMap) -> ClientKind {
 }
 
 fn is_sphaira_request(headers: &HeaderMap) -> bool {
-    for required in ["host", "accept", "accept-encoding"] {
-        if !headers.contains_key(required) {
-            return false;
-        }
-    }
-    headers.keys().all(|name| {
-        let name = name.as_str();
-        matches!(name, "host" | "accept" | "accept-encoding" | "authorization" | "range")
-            || name.starts_with("x-")
-    })
+    headers
+        .get("user-agent")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.to_ascii_lowercase().starts_with("sphaira/"))
 }
 
 pub fn request_prefers_html(headers: &HeaderMap) -> bool {
@@ -139,7 +133,10 @@ pub fn encrypt_shop_payload<T: Serialize>(
     public_key_pem: Option<&str>,
 ) -> Result<Vec<u8>, ShopPayloadError> {
     let serialized = serde_json::to_vec(payload)?;
-    let compressed = zstd::encode_all(serialized.as_slice(), 22)?;
+    let compressed = structured_zstd::encoding::compress_to_vec(
+        serialized.as_slice(),
+        structured_zstd::encoding::CompressionLevel::from_level(22),
+    );
     let compressed_len = compressed.len() as u64;
 
     let mut aes_key = [0_u8; 16];
