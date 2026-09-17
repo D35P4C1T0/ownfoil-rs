@@ -56,7 +56,7 @@ View logs with `docker compose logs -f ownfoil`; stop with `docker compose down`
 
 ## Other ways to run
 
-- **Native:** Rust 1.92+ and a C toolchain are required. For local HTTP access:
+- **Native:** Rust 1.97+ and a C toolchain are required. For local HTTP access:
 
   ```sh
   OWNFOIL_INSECURE_ADMIN_COOKIE=true cargo run --release -p ownfoil-rs -- \
