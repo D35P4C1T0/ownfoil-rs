@@ -15,7 +15,7 @@ small boards.
 
 ## Native build (ARM64 or ARMv7)
 
-Install Rust 1.92 or newer, a C compiler, and the system linker. SQLite is bundled;
+Install Rust 1.97 or newer, a C compiler, and the system linker. SQLite is bundled;
 Zstandard compression is Rust code. On Debian/Ubuntu, install `build-essential`,
 `pkg-config`, and `ca-certificates`, then install Rust using your normal Rust
 installation method.
