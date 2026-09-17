@@ -1,0 +1,3038 @@
+{
+  "upstream": "0cce4bbc684b30930b1576847c8c8fb5202114bf",
+  "title": "0100000000AAAAA0",
+  "metadata": {
+    "0100000000AAAAA0": {
+      "id": "0100000000AAAAA0",
+      "name": "Alpha Game",
+      "publisher": "Nintendo"
+    },
+    "0100000000AA1001": {
+      "id": "0100000000AA1001",
+      "name": "Alpha Extra Levels"
+    }
+  },
+  "apps": [
+    [
+      "0100000000AAAAA0",
+      "BASE",
+      "0",
+      true,
+      "Alpha.nsp",
+      3000
+    ],
+    [
+      "0100000000AAA800",
+      "UPDATE",
+      "65536",
+      true,
+      "Alpha[v65536].nsp",
+      1000
+    ],
+    [
+      "0100000000AAA800",
+      "UPDATE",
+      "131072",
+      false,
+      null,
+      null
+    ],
+    [
+      "0100000000AA1001",
+      "DLC",
+      "0",
+      true,
+      "AlphaDLC.nsp",
+      2000
+    ],
+    [
+      "0100000000AA1001",
+      "DLC",
+      "65536",
+      false,
+      null,
+      null
+    ]
+  ],
+  "cases": [
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ titles { items { apps { title { titleId } titledb { apps { id } availableVersions { version } availableDlc { appId } } files { library { id } apps { title { titleId } titledb { name } versions { version } } } } } } }",
+      "data": {
+        "titles": {
+          "items": [
+            {
+              "apps": []
+            },
+            {
+              "apps": [
+                {
+                  "title": null,
+                  "titledb": {
+                    "apps": null,
+                    "availableVersions": null,
+                    "availableDlc": null
+                  },
+                  "files": [
+                    {
+                      "library": null,
+                      "apps": [
+                        {
+                          "title": null,
+                          "titledb": null,
+                          "versions": null
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "title": null,
+                  "titledb": {
+                    "apps": null,
+                    "availableVersions": null,
+                    "availableDlc": null
+                  },
+                  "files": []
+                },
+                {
+                  "title": null,
+                  "titledb": null,
+                  "files": [
+                    {
+                      "library": null,
+                      "apps": [
+                        {
+                          "title": null,
+                          "titledb": null,
+                          "versions": null
+                        }
+                      ]
+                    }
+                  ]
+                },
+                {
+                  "title": null,
+                  "titledb": null,
+                  "files": []
+                },
+                {
+                  "title": null,
+                  "titledb": {
+                    "apps": null,
+                    "availableVersions": null,
+                    "availableDlc": null
+                  },
+                  "files": [
+                    {
+                      "library": null,
+                      "apps": [
+                        {
+                          "title": null,
+                          "titledb": null,
+                          "versions": null
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ tasks { children { children { id } } } }",
+      "data": {
+        "tasks": [
+          {
+            "children": [
+              {
+                "children": null
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ titles { total items { titleId name ownership { haveBase complete upToDate } } } }",
+      "data": {
+        "titles": {
+          "total": 2,
+          "items": [
+            {
+              "titleId": "0100000000AA1001",
+              "name": "Alpha Extra Levels",
+              "ownership": null
+            },
+            {
+              "titleId": "0100000000AAAAA0",
+              "name": "Alpha Game",
+              "ownership": {
+                "haveBase": true,
+                "complete": true,
+                "upToDate": false
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ titles(owned: true) { total items { titleId name apps { id appId appVersion owned } } } }",
+      "data": {
+        "titles": {
+          "total": 1,
+          "items": [
+            {
+              "titleId": "0100000000AAAAA0",
+              "name": "Alpha Game",
+              "apps": [
+                {
+                  "id": "4",
+                  "appId": "0100000000AA1001",
+                  "appVersion": 0,
+                  "owned": true
+                },
+                {
+                  "id": "5",
+                  "appId": "0100000000AA1001",
+                  "appVersion": 65536,
+                  "owned": false
+                },
+                {
+                  "id": "2",
+                  "appId": "0100000000AAA800",
+                  "appVersion": 65536,
+                  "owned": true
+                },
+                {
+                  "id": "3",
+                  "appId": "0100000000AAA800",
+                  "appVersion": 131072,
+                  "owned": false
+                },
+                {
+                  "id": "1",
+                  "appId": "0100000000AAAAA0",
+                  "appVersion": 0,
+                  "owned": true
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ titles(owned: false) { total items { titleId name } } }",
+      "data": {
+        "titles": {
+          "total": 1,
+          "items": [
+            {
+              "titleId": "0100000000AA1001",
+              "name": "Alpha Extra Levels"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ apps { total items { id appId appType appVersion owned title { titleId name } titledb { name } versions { version owned } } } }",
+      "data": {
+        "apps": {
+          "total": 5,
+          "items": [
+            {
+              "id": "1",
+              "appId": "0100000000AAAAA0",
+              "appType": "BASE",
+              "appVersion": 0,
+              "owned": true,
+              "title": {
+                "titleId": "0100000000AAAAA0",
+                "name": "Alpha Game"
+              },
+              "titledb": {
+                "name": "Alpha Game"
+              },
+              "versions": [
+                {
+                  "version": 65536,
+                  "owned": true
+                },
+                {
+                  "version": 131072,
+                  "owned": false
+                }
+              ]
+            },
+            {
+              "id": "2",
+              "appId": "0100000000AAA800",
+              "appType": "UPDATE",
+              "appVersion": 65536,
+              "owned": true,
+              "title": {
+                "titleId": "0100000000AAAAA0",
+                "name": "Alpha Game"
+              },
+              "titledb": null,
+              "versions": [
+                {
+                  "version": 65536,
+                  "owned": true
+                },
+                {
+                  "version": 131072,
+                  "owned": false
+                }
+              ]
+            },
+            {
+              "id": "3",
+              "appId": "0100000000AAA800",
+              "appType": "UPDATE",
+              "appVersion": 131072,
+              "owned": false,
+              "title": {
+                "titleId": "0100000000AAAAA0",
+                "name": "Alpha Game"
+              },
+              "titledb": null,
+              "versions": [
+                {
+                  "version": 65536,
+                  "owned": true
+                },
+                {
+                  "version": 131072,
+                  "owned": false
+                }
+              ]
+            },
+            {
+              "id": "4",
+              "appId": "0100000000AA1001",
+              "appType": "DLC",
+              "appVersion": 0,
+              "owned": true,
+              "title": {
+                "titleId": "0100000000AAAAA0",
+                "name": "Alpha Game"
+              },
+              "titledb": {
+                "name": "Alpha Extra Levels"
+              },
+              "versions": [
+                {
+                  "version": 0,
+                  "owned": true
+                },
+                {
+                  "version": 65536,
+                  "owned": false
+                }
+              ]
+            },
+            {
+              "id": "5",
+              "appId": "0100000000AA1001",
+              "appType": "DLC",
+              "appVersion": 65536,
+              "owned": false,
+              "title": {
+                "titleId": "0100000000AAAAA0",
+                "name": "Alpha Game"
+              },
+              "titledb": {
+                "name": "Alpha Extra Levels"
+              },
+              "versions": [
+                {
+                  "version": 0,
+                  "owned": true
+                },
+                {
+                  "version": 65536,
+                  "owned": false
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ apps(groupByAppId: true) { total items { id appId appVersion owned versions { version owned } } } }",
+      "data": {
+        "apps": {
+          "total": 3,
+          "items": [
+            {
+              "id": "5",
+              "appId": "0100000000AA1001",
+              "appVersion": 65536,
+              "owned": true,
+              "versions": [
+                {
+                  "version": 0,
+                  "owned": true
+                },
+                {
+                  "version": 65536,
+                  "owned": false
+                }
+              ]
+            },
+            {
+              "id": "3",
+              "appId": "0100000000AAA800",
+              "appVersion": 131072,
+              "owned": true,
+              "versions": [
+                {
+                  "version": 65536,
+                  "owned": true
+                },
+                {
+                  "version": 131072,
+                  "owned": false
+                }
+              ]
+            },
+            {
+              "id": "1",
+              "appId": "0100000000AAAAA0",
+              "appVersion": 0,
+              "owned": true,
+              "versions": [
+                {
+                  "version": 65536,
+                  "owned": true
+                },
+                {
+                  "version": 131072,
+                  "owned": false
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ files { total items { id filename size libraryId library { id path } apps { id appId title { name } versions { version owned } } } } }",
+      "data": {
+        "files": {
+          "total": 3,
+          "items": [
+            {
+              "id": "1",
+              "filename": "Alpha.nsp",
+              "size": 3000,
+              "libraryId": 1,
+              "library": {
+                "id": "1",
+                "path": "/parity/games"
+              },
+              "apps": [
+                {
+                  "id": "1",
+                  "appId": "0100000000AAAAA0",
+                  "title": {
+                    "name": "Alpha Game"
+                  },
+                  "versions": [
+                    {
+                      "version": 65536,
+                      "owned": true
+                    },
+                    {
+                      "version": 131072,
+                      "owned": false
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "2",
+              "filename": "Alpha[v65536].nsp",
+              "size": 1000,
+              "libraryId": 1,
+              "library": {
+                "id": "1",
+                "path": "/parity/games"
+              },
+              "apps": [
+                {
+                  "id": "2",
+                  "appId": "0100000000AAA800",
+                  "title": {
+                    "name": "Alpha Game"
+                  },
+                  "versions": [
+                    {
+                      "version": 65536,
+                      "owned": true
+                    },
+                    {
+                      "version": 131072,
+                      "owned": false
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "3",
+              "filename": "AlphaDLC.nsp",
+              "size": 2000,
+              "libraryId": 1,
+              "library": {
+                "id": "1",
+                "path": "/parity/games"
+              },
+              "apps": [
+                {
+                  "id": "4",
+                  "appId": "0100000000AA1001",
+                  "title": {
+                    "name": "Alpha Game"
+                  },
+                  "versions": [
+                    {
+                      "version": 0,
+                      "owned": true
+                    },
+                    {
+                      "version": 65536,
+                      "owned": false
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ apps(appType: [BASE]) { items { files { filename apps { appId files { filename } } } } } }",
+      "data": {
+        "apps": {
+          "items": [
+            {
+              "files": [
+                {
+                  "filename": "Alpha.nsp",
+                  "apps": [
+                    {
+                      "appId": "0100000000AAAAA0",
+                      "files": null
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ files { items { apps { title { apps { id } } } } } }",
+      "data": {
+        "files": {
+          "items": [
+            {
+              "apps": [
+                {
+                  "title": {
+                    "apps": null
+                  }
+                }
+              ]
+            },
+            {
+              "apps": [
+                {
+                  "title": {
+                    "apps": null
+                  }
+                }
+              ]
+            },
+            {
+              "apps": [
+                {
+                  "title": {
+                    "apps": null
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ libraries { id path } tasks { id taskName status input children { id taskName status completionPct } } }",
+      "data": {
+        "libraries": [
+          {
+            "id": "1",
+            "path": "/parity/games"
+          }
+        ],
+        "tasks": [
+          {
+            "id": "1",
+            "taskName": "scan_libraries",
+            "status": "COMPLETED",
+            "input": "{\"path\": \"/games\"}",
+            "children": [
+              {
+                "id": "2",
+                "taskName": "scan_library",
+                "status": "RUNNING",
+                "completionPct": 40
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ tasks(includeChildren: true, status: RUNNING) { id parentId taskName status } task(id:\"1\") { id children { id } } }",
+      "data": {
+        "tasks": [
+          {
+            "id": "2",
+            "parentId": "1",
+            "taskName": "scan_library",
+            "status": "RUNNING"
+          }
+        ],
+        "task": {
+          "id": "1",
+          "children": [
+            {
+              "id": "2"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ app(id:\"2\") { appId title { name } files { filename } versions { version owned } } file(id:\"2\") { filename apps { appId } } }",
+      "data": {
+        "app": {
+          "appId": "0100000000AAA800",
+          "title": {
+            "name": "Alpha Game"
+          },
+          "files": [
+            {
+              "filename": "Alpha[v65536].nsp"
+            }
+          ],
+          "versions": [
+            {
+              "version": 65536,
+              "owned": true
+            },
+            {
+              "version": 131072,
+              "owned": false
+            }
+          ]
+        },
+        "file": {
+          "filename": "Alpha[v65536].nsp",
+          "apps": [
+            {
+              "appId": "0100000000AAA800"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ app(id:\"999\") { id } file(id:\"999\") { id } title(titleId:\"0000000000000000\") { titleId } task(id:\"999\") { id } }",
+      "data": {
+        "app": null,
+        "file": null,
+        "title": null,
+        "task": null
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ stats { totalFiles totalSize identifiedFiles unidentifiedFiles totalTitles ownedTitles totalApps ownedApps completeTitles upToDateTitles appsByType { key count owned } filesByExtension { key count size } filesByVerificationStatus { status count size } } }",
+      "data": {
+        "stats": {
+          "totalFiles": 3,
+          "totalSize": 6000,
+          "identifiedFiles": 3,
+          "unidentifiedFiles": 0,
+          "totalTitles": 2,
+          "ownedTitles": 1,
+          "totalApps": 5,
+          "ownedApps": 3,
+          "completeTitles": 1,
+          "upToDateTitles": 0,
+          "appsByType": [
+            {
+              "key": "BASE",
+              "count": 1,
+              "owned": 1
+            },
+            {
+              "key": "DLC",
+              "count": 2,
+              "owned": 1
+            },
+            {
+              "key": "UPDATE",
+              "count": 2,
+              "owned": 1
+            }
+          ],
+          "filesByExtension": [
+            {
+              "key": "nsp",
+              "count": 3,
+              "size": 6000
+            }
+          ],
+          "filesByVerificationStatus": [
+            {
+              "status": "VALID",
+              "count": 0,
+              "size": 0
+            },
+            {
+              "status": "REPACK",
+              "count": 0,
+              "size": 0
+            },
+            {
+              "status": "MODIFIED",
+              "count": 0,
+              "size": 0
+            },
+            {
+              "status": "CORRUPT",
+              "count": 0,
+              "size": 0
+            },
+            {
+              "status": "SIGNATURE_OK",
+              "count": 0,
+              "size": 0
+            },
+            {
+              "status": "SIGNATURE_FAILED",
+              "count": 0,
+              "size": 0
+            },
+            {
+              "status": "UNVERIFIED",
+              "count": 3,
+              "size": 6000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ title(titleId:\"0100000000aaaaa0\") { titleId name apps(appType:[BASE]) { appId versions { version owned } } } }",
+      "data": {
+        "title": {
+          "titleId": "0100000000AAAAA0",
+          "name": "Alpha Game",
+          "apps": [
+            {
+              "appId": "0100000000AAAAA0",
+              "versions": [
+                {
+                  "version": 65536,
+                  "owned": true
+                },
+                {
+                  "version": 131072,
+                  "owned": false
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ apps(groupByAppId:false, owned:false) { total items { id appId appVersion owned } } }",
+      "data": {
+        "apps": {
+          "total": 2,
+          "items": [
+            {
+              "id": "3",
+              "appId": "0100000000AAA800",
+              "appVersion": 131072,
+              "owned": false
+            },
+            {
+              "id": "5",
+              "appId": "0100000000AA1001",
+              "appVersion": 65536,
+              "owned": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ apps(groupByAppId:false, filter:{owned:false, appVersion:{gte:65536}}) { total items { id appId appVersion owned } } }",
+      "data": {
+        "apps": {
+          "total": 2,
+          "items": [
+            {
+              "id": "3",
+              "appId": "0100000000AAA800",
+              "appVersion": 131072,
+              "owned": false
+            },
+            {
+              "id": "5",
+              "appId": "0100000000AA1001",
+              "appVersion": 65536,
+              "owned": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ apps(groupByAppId:false, owned:true) { total items { id appId appVersion owned } } }",
+      "data": {
+        "apps": {
+          "total": 3,
+          "items": [
+            {
+              "id": "1",
+              "appId": "0100000000AAAAA0",
+              "appVersion": 0,
+              "owned": true
+            },
+            {
+              "id": "2",
+              "appId": "0100000000AAA800",
+              "appVersion": 65536,
+              "owned": true
+            },
+            {
+              "id": "4",
+              "appId": "0100000000AA1001",
+              "appVersion": 0,
+              "owned": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ apps(groupByAppId:false, filter:{owned:true, appVersion:{gte:65536}}) { total items { id appId appVersion owned } } }",
+      "data": {
+        "apps": {
+          "total": 1,
+          "items": [
+            {
+              "id": "2",
+              "appId": "0100000000AAA800",
+              "appVersion": 65536,
+              "owned": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ apps(groupByAppId:true, owned:false) { total items { id appId appVersion owned } } }",
+      "data": {
+        "apps": {
+          "total": 0,
+          "items": []
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ apps(groupByAppId:true, filter:{owned:false, appVersion:{gte:65536}}) { total items { id appId appVersion owned } } }",
+      "data": {
+        "apps": {
+          "total": 1,
+          "items": [
+            {
+              "id": "5",
+              "appId": "0100000000AA1001",
+              "appVersion": 65536,
+              "owned": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ apps(groupByAppId:true, owned:true) { total items { id appId appVersion owned } } }",
+      "data": {
+        "apps": {
+          "total": 3,
+          "items": [
+            {
+              "id": "5",
+              "appId": "0100000000AA1001",
+              "appVersion": 65536,
+              "owned": true
+            },
+            {
+              "id": "3",
+              "appId": "0100000000AAA800",
+              "appVersion": 131072,
+              "owned": true
+            },
+            {
+              "id": "1",
+              "appId": "0100000000AAAAA0",
+              "appVersion": 0,
+              "owned": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ apps(groupByAppId:true, filter:{owned:true, appVersion:{gte:65536}}) { total items { id appId appVersion owned } } }",
+      "data": {
+        "apps": {
+          "total": 1,
+          "items": [
+            {
+              "id": "3",
+              "appId": "0100000000AAA800",
+              "appVersion": 131072,
+              "owned": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ apps(orderBy:{field:NAME,direction:ASC},page:1,pageSize:2) { total items { id appId appVersion } } }",
+      "data": {
+        "apps": {
+          "total": 5,
+          "items": [
+            {
+              "id": "1",
+              "appId": "0100000000AAAAA0",
+              "appVersion": 0
+            },
+            {
+              "id": "2",
+              "appId": "0100000000AAA800",
+              "appVersion": 65536
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ apps(orderBy:{field:NAME,direction:DESC},page:1,pageSize:2) { total items { id appId appVersion } } }",
+      "data": {
+        "apps": {
+          "total": 5,
+          "items": [
+            {
+              "id": "1",
+              "appId": "0100000000AAAAA0",
+              "appVersion": 0
+            },
+            {
+              "id": "2",
+              "appId": "0100000000AAA800",
+              "appVersion": 65536
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ apps(orderBy:{field:SIZE,direction:ASC},page:1,pageSize:2) { total items { id appId appVersion } } }",
+      "data": {
+        "apps": {
+          "total": 5,
+          "items": [
+            {
+              "id": "1",
+              "appId": "0100000000AAAAA0",
+              "appVersion": 0
+            },
+            {
+              "id": "2",
+              "appId": "0100000000AAA800",
+              "appVersion": 65536
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ apps(orderBy:{field:SIZE,direction:DESC},page:1,pageSize:2) { total items { id appId appVersion } } }",
+      "data": {
+        "apps": {
+          "total": 5,
+          "items": [
+            {
+              "id": "5",
+              "appId": "0100000000AA1001",
+              "appVersion": 65536
+            },
+            {
+              "id": "4",
+              "appId": "0100000000AA1001",
+              "appVersion": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ apps(orderBy:{field:VERSION,direction:ASC},page:1,pageSize:2) { total items { id appId appVersion } } }",
+      "data": {
+        "apps": {
+          "total": 5,
+          "items": [
+            {
+              "id": "1",
+              "appId": "0100000000AAAAA0",
+              "appVersion": 0
+            },
+            {
+              "id": "4",
+              "appId": "0100000000AA1001",
+              "appVersion": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ apps(orderBy:{field:VERSION,direction:DESC},page:1,pageSize:2) { total items { id appId appVersion } } }",
+      "data": {
+        "apps": {
+          "total": 5,
+          "items": [
+            {
+              "id": "3",
+              "appId": "0100000000AAA800",
+              "appVersion": 131072
+            },
+            {
+              "id": "2",
+              "appId": "0100000000AAA800",
+              "appVersion": 65536
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ files(orderBy:{field:NAME,direction:ASC},page:1,pageSize:2) { total items { id filename size } } }",
+      "data": {
+        "files": {
+          "total": 3,
+          "items": [
+            {
+              "id": "1",
+              "filename": "Alpha.nsp",
+              "size": 3000
+            },
+            {
+              "id": "2",
+              "filename": "Alpha[v65536].nsp",
+              "size": 1000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ files(orderBy:{field:NAME,direction:DESC},page:1,pageSize:2) { total items { id filename size } } }",
+      "data": {
+        "files": {
+          "total": 3,
+          "items": [
+            {
+              "id": "3",
+              "filename": "AlphaDLC.nsp",
+              "size": 2000
+            },
+            {
+              "id": "2",
+              "filename": "Alpha[v65536].nsp",
+              "size": 1000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ files(orderBy:{field:SIZE,direction:ASC},page:1,pageSize:2) { total items { id filename size } } }",
+      "data": {
+        "files": {
+          "total": 3,
+          "items": [
+            {
+              "id": "2",
+              "filename": "Alpha[v65536].nsp",
+              "size": 1000
+            },
+            {
+              "id": "3",
+              "filename": "AlphaDLC.nsp",
+              "size": 2000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ files(orderBy:{field:SIZE,direction:DESC},page:1,pageSize:2) { total items { id filename size } } }",
+      "data": {
+        "files": {
+          "total": 3,
+          "items": [
+            {
+              "id": "1",
+              "filename": "Alpha.nsp",
+              "size": 3000
+            },
+            {
+              "id": "3",
+              "filename": "AlphaDLC.nsp",
+              "size": 2000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ files(orderBy:{field:VERSION,direction:ASC},page:1,pageSize:2) { total items { id filename size } } }",
+      "data": {
+        "files": {
+          "total": 3,
+          "items": [
+            {
+              "id": "1",
+              "filename": "Alpha.nsp",
+              "size": 3000
+            },
+            {
+              "id": "2",
+              "filename": "Alpha[v65536].nsp",
+              "size": 1000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ files(orderBy:{field:VERSION,direction:DESC},page:1,pageSize:2) { total items { id filename size } } }",
+      "data": {
+        "files": {
+          "total": 3,
+          "items": [
+            {
+              "id": "3",
+              "filename": "AlphaDLC.nsp",
+              "size": 2000
+            },
+            {
+              "id": "2",
+              "filename": "Alpha[v65536].nsp",
+              "size": 1000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ titles(orderBy:{field:NAME,direction:ASC},page:1,pageSize:2) { total items { titleId name } } }",
+      "data": {
+        "titles": {
+          "total": 2,
+          "items": [
+            {
+              "titleId": "0100000000AA1001",
+              "name": "Alpha Extra Levels"
+            },
+            {
+              "titleId": "0100000000AAAAA0",
+              "name": "Alpha Game"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ titles(orderBy:{field:NAME,direction:DESC},page:1,pageSize:2) { total items { titleId name } } }",
+      "data": {
+        "titles": {
+          "total": 2,
+          "items": [
+            {
+              "titleId": "0100000000AAAAA0",
+              "name": "Alpha Game"
+            },
+            {
+              "titleId": "0100000000AA1001",
+              "name": "Alpha Extra Levels"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ titles(orderBy:{field:SIZE,direction:ASC},page:1,pageSize:2) { total items { titleId name } } }",
+      "data": {
+        "titles": {
+          "total": 2,
+          "items": [
+            {
+              "titleId": "0100000000AA1001",
+              "name": "Alpha Extra Levels"
+            },
+            {
+              "titleId": "0100000000AAAAA0",
+              "name": "Alpha Game"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ titles(orderBy:{field:SIZE,direction:DESC},page:1,pageSize:2) { total items { titleId name } } }",
+      "data": {
+        "titles": {
+          "total": 2,
+          "items": [
+            {
+              "titleId": "0100000000AA1001",
+              "name": "Alpha Extra Levels"
+            },
+            {
+              "titleId": "0100000000AAAAA0",
+              "name": "Alpha Game"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ titles(orderBy:{field:VERSION,direction:ASC},page:1,pageSize:2) { total items { titleId name } } }",
+      "data": {
+        "titles": {
+          "total": 2,
+          "items": [
+            {
+              "titleId": "0100000000AA1001",
+              "name": "Alpha Extra Levels"
+            },
+            {
+              "titleId": "0100000000AAAAA0",
+              "name": "Alpha Game"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": true,
+      "query": "{ titles(orderBy:{field:VERSION,direction:DESC},page:1,pageSize:2) { total items { titleId name } } }",
+      "data": {
+        "titles": {
+          "total": 2,
+          "items": [
+            {
+              "titleId": "0100000000AAAAA0",
+              "name": "Alpha Game"
+            },
+            {
+              "titleId": "0100000000AA1001",
+              "name": "Alpha Extra Levels"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ titles { items { apps { title { titleId } titledb { apps { id } availableVersions { version } availableDlc { appId } } files { library { id } apps { title { titleId } titledb { name } versions { version } } } } } } }",
+      "data": {
+        "titles": {
+          "items": [
+            {
+              "apps": []
+            },
+            {
+              "apps": [
+                {
+                  "title": null,
+                  "titledb": {
+                    "apps": null,
+                    "availableVersions": null,
+                    "availableDlc": null
+                  },
+                  "files": null
+                },
+                {
+                  "title": null,
+                  "titledb": {
+                    "apps": null,
+                    "availableVersions": null,
+                    "availableDlc": null
+                  },
+                  "files": null
+                },
+                {
+                  "title": null,
+                  "titledb": null,
+                  "files": null
+                },
+                {
+                  "title": null,
+                  "titledb": null,
+                  "files": null
+                },
+                {
+                  "title": null,
+                  "titledb": {
+                    "apps": null,
+                    "availableVersions": null,
+                    "availableDlc": null
+                  },
+                  "files": null
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ tasks { children { children { id } } } }",
+      "data": {
+        "tasks": []
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ titles { total items { titleId name ownership { haveBase complete upToDate } } } }",
+      "data": {
+        "titles": {
+          "total": 2,
+          "items": [
+            {
+              "titleId": "0100000000AA1001",
+              "name": "Alpha Extra Levels",
+              "ownership": null
+            },
+            {
+              "titleId": "0100000000AAAAA0",
+              "name": "Alpha Game",
+              "ownership": {
+                "haveBase": true,
+                "complete": true,
+                "upToDate": false
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ titles(owned: true) { total items { titleId name apps { id appId appVersion owned } } } }",
+      "data": {
+        "titles": {
+          "total": 1,
+          "items": [
+            {
+              "titleId": "0100000000AAAAA0",
+              "name": "Alpha Game",
+              "apps": [
+                {
+                  "id": "4",
+                  "appId": "0100000000AA1001",
+                  "appVersion": 0,
+                  "owned": true
+                },
+                {
+                  "id": "5",
+                  "appId": "0100000000AA1001",
+                  "appVersion": 65536,
+                  "owned": false
+                },
+                {
+                  "id": "2",
+                  "appId": "0100000000AAA800",
+                  "appVersion": 65536,
+                  "owned": true
+                },
+                {
+                  "id": "3",
+                  "appId": "0100000000AAA800",
+                  "appVersion": 131072,
+                  "owned": false
+                },
+                {
+                  "id": "1",
+                  "appId": "0100000000AAAAA0",
+                  "appVersion": 0,
+                  "owned": true
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ titles(owned: false) { total items { titleId name } } }",
+      "data": {
+        "titles": {
+          "total": 1,
+          "items": [
+            {
+              "titleId": "0100000000AA1001",
+              "name": "Alpha Extra Levels"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ apps { total items { id appId appType appVersion owned title { titleId name } titledb { name } versions { version owned } } } }",
+      "data": {
+        "apps": {
+          "total": 5,
+          "items": [
+            {
+              "id": "1",
+              "appId": "0100000000AAAAA0",
+              "appType": "BASE",
+              "appVersion": 0,
+              "owned": true,
+              "title": {
+                "titleId": "0100000000AAAAA0",
+                "name": "Alpha Game"
+              },
+              "titledb": {
+                "name": "Alpha Game"
+              },
+              "versions": [
+                {
+                  "version": 65536,
+                  "owned": true
+                },
+                {
+                  "version": 131072,
+                  "owned": false
+                }
+              ]
+            },
+            {
+              "id": "2",
+              "appId": "0100000000AAA800",
+              "appType": "UPDATE",
+              "appVersion": 65536,
+              "owned": true,
+              "title": {
+                "titleId": "0100000000AAAAA0",
+                "name": "Alpha Game"
+              },
+              "titledb": null,
+              "versions": [
+                {
+                  "version": 65536,
+                  "owned": true
+                },
+                {
+                  "version": 131072,
+                  "owned": false
+                }
+              ]
+            },
+            {
+              "id": "3",
+              "appId": "0100000000AAA800",
+              "appType": "UPDATE",
+              "appVersion": 131072,
+              "owned": false,
+              "title": {
+                "titleId": "0100000000AAAAA0",
+                "name": "Alpha Game"
+              },
+              "titledb": null,
+              "versions": [
+                {
+                  "version": 65536,
+                  "owned": true
+                },
+                {
+                  "version": 131072,
+                  "owned": false
+                }
+              ]
+            },
+            {
+              "id": "4",
+              "appId": "0100000000AA1001",
+              "appType": "DLC",
+              "appVersion": 0,
+              "owned": true,
+              "title": {
+                "titleId": "0100000000AAAAA0",
+                "name": "Alpha Game"
+              },
+              "titledb": {
+                "name": "Alpha Extra Levels"
+              },
+              "versions": [
+                {
+                  "version": 0,
+                  "owned": true
+                },
+                {
+                  "version": 65536,
+                  "owned": false
+                }
+              ]
+            },
+            {
+              "id": "5",
+              "appId": "0100000000AA1001",
+              "appType": "DLC",
+              "appVersion": 65536,
+              "owned": false,
+              "title": {
+                "titleId": "0100000000AAAAA0",
+                "name": "Alpha Game"
+              },
+              "titledb": {
+                "name": "Alpha Extra Levels"
+              },
+              "versions": [
+                {
+                  "version": 0,
+                  "owned": true
+                },
+                {
+                  "version": 65536,
+                  "owned": false
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ apps(groupByAppId: true) { total items { id appId appVersion owned versions { version owned } } } }",
+      "data": {
+        "apps": {
+          "total": 3,
+          "items": [
+            {
+              "id": "5",
+              "appId": "0100000000AA1001",
+              "appVersion": 65536,
+              "owned": true,
+              "versions": [
+                {
+                  "version": 0,
+                  "owned": true
+                },
+                {
+                  "version": 65536,
+                  "owned": false
+                }
+              ]
+            },
+            {
+              "id": "3",
+              "appId": "0100000000AAA800",
+              "appVersion": 131072,
+              "owned": true,
+              "versions": [
+                {
+                  "version": 65536,
+                  "owned": true
+                },
+                {
+                  "version": 131072,
+                  "owned": false
+                }
+              ]
+            },
+            {
+              "id": "1",
+              "appId": "0100000000AAAAA0",
+              "appVersion": 0,
+              "owned": true,
+              "versions": [
+                {
+                  "version": 65536,
+                  "owned": true
+                },
+                {
+                  "version": 131072,
+                  "owned": false
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ files { total items { id filename size libraryId library { id path } apps { id appId title { name } versions { version owned } } } } }",
+      "data": {
+        "files": {
+          "total": 0,
+          "items": []
+        }
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ apps(appType: [BASE]) { items { files { filename apps { appId files { filename } } } } } }",
+      "data": {
+        "apps": {
+          "items": [
+            {
+              "files": null
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ files { items { apps { title { apps { id } } } } } }",
+      "data": {
+        "files": {
+          "items": []
+        }
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ libraries { id path } tasks { id taskName status input children { id taskName status completionPct } } }",
+      "data": {
+        "libraries": [],
+        "tasks": []
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ tasks(includeChildren: true, status: RUNNING) { id parentId taskName status } task(id:\"1\") { id children { id } } }",
+      "data": {
+        "tasks": [],
+        "task": null
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ app(id:\"2\") { appId title { name } files { filename } versions { version owned } } file(id:\"2\") { filename apps { appId } } }",
+      "data": {
+        "app": {
+          "appId": "0100000000AAA800",
+          "title": {
+            "name": "Alpha Game"
+          },
+          "files": null,
+          "versions": [
+            {
+              "version": 65536,
+              "owned": true
+            },
+            {
+              "version": 131072,
+              "owned": false
+            }
+          ]
+        },
+        "file": null
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ app(id:\"999\") { id } file(id:\"999\") { id } title(titleId:\"0000000000000000\") { titleId } task(id:\"999\") { id } }",
+      "data": {
+        "app": null,
+        "file": null,
+        "title": null,
+        "task": null
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ stats { totalFiles totalSize identifiedFiles unidentifiedFiles totalTitles ownedTitles totalApps ownedApps completeTitles upToDateTitles appsByType { key count owned } filesByExtension { key count size } filesByVerificationStatus { status count size } } }",
+      "data": {
+        "stats": {
+          "totalFiles": 0,
+          "totalSize": 0,
+          "identifiedFiles": 0,
+          "unidentifiedFiles": 0,
+          "totalTitles": 2,
+          "ownedTitles": 1,
+          "totalApps": 5,
+          "ownedApps": 3,
+          "completeTitles": 1,
+          "upToDateTitles": 0,
+          "appsByType": [
+            {
+              "key": "BASE",
+              "count": 1,
+              "owned": 1
+            },
+            {
+              "key": "DLC",
+              "count": 2,
+              "owned": 1
+            },
+            {
+              "key": "UPDATE",
+              "count": 2,
+              "owned": 1
+            }
+          ],
+          "filesByExtension": null,
+          "filesByVerificationStatus": null
+        }
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ title(titleId:\"0100000000aaaaa0\") { titleId name apps(appType:[BASE]) { appId versions { version owned } } } }",
+      "data": {
+        "title": {
+          "titleId": "0100000000AAAAA0",
+          "name": "Alpha Game",
+          "apps": [
+            {
+              "appId": "0100000000AAAAA0",
+              "versions": [
+                {
+                  "version": 65536,
+                  "owned": true
+                },
+                {
+                  "version": 131072,
+                  "owned": false
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ apps(groupByAppId:false, owned:false) { total items { id appId appVersion owned } } }",
+      "data": {
+        "apps": {
+          "total": 2,
+          "items": [
+            {
+              "id": "3",
+              "appId": "0100000000AAA800",
+              "appVersion": 131072,
+              "owned": false
+            },
+            {
+              "id": "5",
+              "appId": "0100000000AA1001",
+              "appVersion": 65536,
+              "owned": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ apps(groupByAppId:false, filter:{owned:false, appVersion:{gte:65536}}) { total items { id appId appVersion owned } } }",
+      "data": {
+        "apps": {
+          "total": 2,
+          "items": [
+            {
+              "id": "3",
+              "appId": "0100000000AAA800",
+              "appVersion": 131072,
+              "owned": false
+            },
+            {
+              "id": "5",
+              "appId": "0100000000AA1001",
+              "appVersion": 65536,
+              "owned": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ apps(groupByAppId:false, owned:true) { total items { id appId appVersion owned } } }",
+      "data": {
+        "apps": {
+          "total": 3,
+          "items": [
+            {
+              "id": "1",
+              "appId": "0100000000AAAAA0",
+              "appVersion": 0,
+              "owned": true
+            },
+            {
+              "id": "2",
+              "appId": "0100000000AAA800",
+              "appVersion": 65536,
+              "owned": true
+            },
+            {
+              "id": "4",
+              "appId": "0100000000AA1001",
+              "appVersion": 0,
+              "owned": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ apps(groupByAppId:false, filter:{owned:true, appVersion:{gte:65536}}) { total items { id appId appVersion owned } } }",
+      "data": {
+        "apps": {
+          "total": 1,
+          "items": [
+            {
+              "id": "2",
+              "appId": "0100000000AAA800",
+              "appVersion": 65536,
+              "owned": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ apps(groupByAppId:true, owned:false) { total items { id appId appVersion owned } } }",
+      "data": {
+        "apps": {
+          "total": 0,
+          "items": []
+        }
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ apps(groupByAppId:true, filter:{owned:false, appVersion:{gte:65536}}) { total items { id appId appVersion owned } } }",
+      "data": {
+        "apps": {
+          "total": 1,
+          "items": [
+            {
+              "id": "5",
+              "appId": "0100000000AA1001",
+              "appVersion": 65536,
+              "owned": false
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ apps(groupByAppId:true, owned:true) { total items { id appId appVersion owned } } }",
+      "data": {
+        "apps": {
+          "total": 3,
+          "items": [
+            {
+              "id": "5",
+              "appId": "0100000000AA1001",
+              "appVersion": 65536,
+              "owned": true
+            },
+            {
+              "id": "3",
+              "appId": "0100000000AAA800",
+              "appVersion": 131072,
+              "owned": true
+            },
+            {
+              "id": "1",
+              "appId": "0100000000AAAAA0",
+              "appVersion": 0,
+              "owned": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ apps(groupByAppId:true, filter:{owned:true, appVersion:{gte:65536}}) { total items { id appId appVersion owned } } }",
+      "data": {
+        "apps": {
+          "total": 1,
+          "items": [
+            {
+              "id": "3",
+              "appId": "0100000000AAA800",
+              "appVersion": 131072,
+              "owned": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ apps(orderBy:{field:NAME,direction:ASC},page:1,pageSize:2) { total items { id appId appVersion } } }",
+      "data": {
+        "apps": {
+          "total": 5,
+          "items": [
+            {
+              "id": "1",
+              "appId": "0100000000AAAAA0",
+              "appVersion": 0
+            },
+            {
+              "id": "2",
+              "appId": "0100000000AAA800",
+              "appVersion": 65536
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ apps(orderBy:{field:NAME,direction:DESC},page:1,pageSize:2) { total items { id appId appVersion } } }",
+      "data": {
+        "apps": {
+          "total": 5,
+          "items": [
+            {
+              "id": "1",
+              "appId": "0100000000AAAAA0",
+              "appVersion": 0
+            },
+            {
+              "id": "2",
+              "appId": "0100000000AAA800",
+              "appVersion": 65536
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ apps(orderBy:{field:SIZE,direction:ASC},page:1,pageSize:2) { total items { id appId appVersion } } }",
+      "data": {
+        "apps": {
+          "total": 5,
+          "items": [
+            {
+              "id": "1",
+              "appId": "0100000000AAAAA0",
+              "appVersion": 0
+            },
+            {
+              "id": "2",
+              "appId": "0100000000AAA800",
+              "appVersion": 65536
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ apps(orderBy:{field:SIZE,direction:DESC},page:1,pageSize:2) { total items { id appId appVersion } } }",
+      "data": {
+        "apps": {
+          "total": 5,
+          "items": [
+            {
+              "id": "5",
+              "appId": "0100000000AA1001",
+              "appVersion": 65536
+            },
+            {
+              "id": "4",
+              "appId": "0100000000AA1001",
+              "appVersion": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ apps(orderBy:{field:VERSION,direction:ASC},page:1,pageSize:2) { total items { id appId appVersion } } }",
+      "data": {
+        "apps": {
+          "total": 5,
+          "items": [
+            {
+              "id": "1",
+              "appId": "0100000000AAAAA0",
+              "appVersion": 0
+            },
+            {
+              "id": "4",
+              "appId": "0100000000AA1001",
+              "appVersion": 0
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ apps(orderBy:{field:VERSION,direction:DESC},page:1,pageSize:2) { total items { id appId appVersion } } }",
+      "data": {
+        "apps": {
+          "total": 5,
+          "items": [
+            {
+              "id": "3",
+              "appId": "0100000000AAA800",
+              "appVersion": 131072
+            },
+            {
+              "id": "2",
+              "appId": "0100000000AAA800",
+              "appVersion": 65536
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ files(orderBy:{field:NAME,direction:ASC},page:1,pageSize:2) { total items { id filename size } } }",
+      "data": {
+        "files": {
+          "total": 0,
+          "items": []
+        }
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ files(orderBy:{field:NAME,direction:DESC},page:1,pageSize:2) { total items { id filename size } } }",
+      "data": {
+        "files": {
+          "total": 0,
+          "items": []
+        }
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ files(orderBy:{field:SIZE,direction:ASC},page:1,pageSize:2) { total items { id filename size } } }",
+      "data": {
+        "files": {
+          "total": 0,
+          "items": []
+        }
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ files(orderBy:{field:SIZE,direction:DESC},page:1,pageSize:2) { total items { id filename size } } }",
+      "data": {
+        "files": {
+          "total": 0,
+          "items": []
+        }
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ files(orderBy:{field:VERSION,direction:ASC},page:1,pageSize:2) { total items { id filename size } } }",
+      "data": {
+        "files": {
+          "total": 0,
+          "items": []
+        }
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ files(orderBy:{field:VERSION,direction:DESC},page:1,pageSize:2) { total items { id filename size } } }",
+      "data": {
+        "files": {
+          "total": 0,
+          "items": []
+        }
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ titles(orderBy:{field:NAME,direction:ASC},page:1,pageSize:2) { total items { titleId name } } }",
+      "data": {
+        "titles": {
+          "total": 2,
+          "items": [
+            {
+              "titleId": "0100000000AA1001",
+              "name": "Alpha Extra Levels"
+            },
+            {
+              "titleId": "0100000000AAAAA0",
+              "name": "Alpha Game"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ titles(orderBy:{field:NAME,direction:DESC},page:1,pageSize:2) { total items { titleId name } } }",
+      "data": {
+        "titles": {
+          "total": 2,
+          "items": [
+            {
+              "titleId": "0100000000AAAAA0",
+              "name": "Alpha Game"
+            },
+            {
+              "titleId": "0100000000AA1001",
+              "name": "Alpha Extra Levels"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ titles(orderBy:{field:SIZE,direction:ASC},page:1,pageSize:2) { total items { titleId name } } }",
+      "data": {
+        "titles": {
+          "total": 2,
+          "items": [
+            {
+              "titleId": "0100000000AA1001",
+              "name": "Alpha Extra Levels"
+            },
+            {
+              "titleId": "0100000000AAAAA0",
+              "name": "Alpha Game"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ titles(orderBy:{field:SIZE,direction:DESC},page:1,pageSize:2) { total items { titleId name } } }",
+      "data": {
+        "titles": {
+          "total": 2,
+          "items": [
+            {
+              "titleId": "0100000000AA1001",
+              "name": "Alpha Extra Levels"
+            },
+            {
+              "titleId": "0100000000AAAAA0",
+              "name": "Alpha Game"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ titles(orderBy:{field:VERSION,direction:ASC},page:1,pageSize:2) { total items { titleId name } } }",
+      "data": {
+        "titles": {
+          "total": 2,
+          "items": [
+            {
+              "titleId": "0100000000AA1001",
+              "name": "Alpha Extra Levels"
+            },
+            {
+              "titleId": "0100000000AAAAA0",
+              "name": "Alpha Game"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": false,
+      "shop": true,
+      "query": "{ titles(orderBy:{field:VERSION,direction:DESC},page:1,pageSize:2) { total items { titleId name } } }",
+      "data": {
+        "titles": {
+          "total": 2,
+          "items": [
+            {
+              "titleId": "0100000000AAAAA0",
+              "name": "Alpha Game"
+            },
+            {
+              "titleId": "0100000000AA1001",
+              "name": "Alpha Extra Levels"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ titles { items { apps { title { titleId } titledb { apps { id } availableVersions { version } availableDlc { appId } } files { library { id } apps { title { titleId } titledb { name } versions { version } } } } } } }",
+      "data": {
+        "titles": {
+          "items": []
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ tasks { children { children { id } } } }",
+      "data": {
+        "tasks": [
+          {
+            "children": [
+              {
+                "children": null
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ titles { total items { titleId name ownership { haveBase complete upToDate } } } }",
+      "data": {
+        "titles": {
+          "total": 0,
+          "items": []
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ titles(owned: true) { total items { titleId name apps { id appId appVersion owned } } } }",
+      "data": {
+        "titles": {
+          "total": 0,
+          "items": []
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ titles(owned: false) { total items { titleId name } } }",
+      "data": {
+        "titles": {
+          "total": 0,
+          "items": []
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ apps { total items { id appId appType appVersion owned title { titleId name } titledb { name } versions { version owned } } } }",
+      "data": {
+        "apps": {
+          "total": 0,
+          "items": []
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ apps(groupByAppId: true) { total items { id appId appVersion owned versions { version owned } } } }",
+      "data": {
+        "apps": {
+          "total": 0,
+          "items": []
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ files { total items { id filename size libraryId library { id path } apps { id appId title { name } versions { version owned } } } } }",
+      "data": {
+        "files": {
+          "total": 3,
+          "items": [
+            {
+              "id": "1",
+              "filename": "Alpha.nsp",
+              "size": 3000,
+              "libraryId": 1,
+              "library": {
+                "id": "1",
+                "path": "/parity/games"
+              },
+              "apps": [
+                {
+                  "id": "1",
+                  "appId": "0100000000AAAAA0",
+                  "title": {
+                    "name": "Alpha Game"
+                  },
+                  "versions": [
+                    {
+                      "version": 65536,
+                      "owned": true
+                    },
+                    {
+                      "version": 131072,
+                      "owned": false
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "2",
+              "filename": "Alpha[v65536].nsp",
+              "size": 1000,
+              "libraryId": 1,
+              "library": {
+                "id": "1",
+                "path": "/parity/games"
+              },
+              "apps": [
+                {
+                  "id": "2",
+                  "appId": "0100000000AAA800",
+                  "title": {
+                    "name": "Alpha Game"
+                  },
+                  "versions": [
+                    {
+                      "version": 65536,
+                      "owned": true
+                    },
+                    {
+                      "version": 131072,
+                      "owned": false
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "id": "3",
+              "filename": "AlphaDLC.nsp",
+              "size": 2000,
+              "libraryId": 1,
+              "library": {
+                "id": "1",
+                "path": "/parity/games"
+              },
+              "apps": [
+                {
+                  "id": "4",
+                  "appId": "0100000000AA1001",
+                  "title": {
+                    "name": "Alpha Game"
+                  },
+                  "versions": [
+                    {
+                      "version": 0,
+                      "owned": true
+                    },
+                    {
+                      "version": 65536,
+                      "owned": false
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ apps(appType: [BASE]) { items { files { filename apps { appId files { filename } } } } } }",
+      "data": {
+        "apps": {
+          "items": []
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ files { items { apps { title { apps { id } } } } } }",
+      "data": {
+        "files": {
+          "items": [
+            {
+              "apps": [
+                {
+                  "title": {
+                    "apps": null
+                  }
+                }
+              ]
+            },
+            {
+              "apps": [
+                {
+                  "title": {
+                    "apps": null
+                  }
+                }
+              ]
+            },
+            {
+              "apps": [
+                {
+                  "title": {
+                    "apps": null
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ libraries { id path } tasks { id taskName status input children { id taskName status completionPct } } }",
+      "data": {
+        "libraries": [
+          {
+            "id": "1",
+            "path": "/parity/games"
+          }
+        ],
+        "tasks": [
+          {
+            "id": "1",
+            "taskName": "scan_libraries",
+            "status": "COMPLETED",
+            "input": "{\"path\": \"/games\"}",
+            "children": [
+              {
+                "id": "2",
+                "taskName": "scan_library",
+                "status": "RUNNING",
+                "completionPct": 40
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ tasks(includeChildren: true, status: RUNNING) { id parentId taskName status } task(id:\"1\") { id children { id } } }",
+      "data": {
+        "tasks": [
+          {
+            "id": "2",
+            "parentId": "1",
+            "taskName": "scan_library",
+            "status": "RUNNING"
+          }
+        ],
+        "task": {
+          "id": "1",
+          "children": [
+            {
+              "id": "2"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ app(id:\"2\") { appId title { name } files { filename } versions { version owned } } file(id:\"2\") { filename apps { appId } } }",
+      "data": {
+        "app": null,
+        "file": {
+          "filename": "Alpha[v65536].nsp",
+          "apps": [
+            {
+              "appId": "0100000000AAA800"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ app(id:\"999\") { id } file(id:\"999\") { id } title(titleId:\"0000000000000000\") { titleId } task(id:\"999\") { id } }",
+      "data": {
+        "app": null,
+        "file": null,
+        "title": null,
+        "task": null
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ stats { totalFiles totalSize identifiedFiles unidentifiedFiles totalTitles ownedTitles totalApps ownedApps completeTitles upToDateTitles appsByType { key count owned } filesByExtension { key count size } filesByVerificationStatus { status count size } } }",
+      "data": {
+        "stats": {
+          "totalFiles": 0,
+          "totalSize": 0,
+          "identifiedFiles": 0,
+          "unidentifiedFiles": 0,
+          "totalTitles": 0,
+          "ownedTitles": 0,
+          "totalApps": 0,
+          "ownedApps": 0,
+          "completeTitles": 0,
+          "upToDateTitles": 0,
+          "appsByType": null,
+          "filesByExtension": null,
+          "filesByVerificationStatus": null
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ title(titleId:\"0100000000aaaaa0\") { titleId name apps(appType:[BASE]) { appId versions { version owned } } } }",
+      "data": {
+        "title": null
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ apps(groupByAppId:false, owned:false) { total items { id appId appVersion owned } } }",
+      "data": {
+        "apps": {
+          "total": 0,
+          "items": []
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ apps(groupByAppId:false, filter:{owned:false, appVersion:{gte:65536}}) { total items { id appId appVersion owned } } }",
+      "data": {
+        "apps": {
+          "total": 0,
+          "items": []
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ apps(groupByAppId:false, owned:true) { total items { id appId appVersion owned } } }",
+      "data": {
+        "apps": {
+          "total": 0,
+          "items": []
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ apps(groupByAppId:false, filter:{owned:true, appVersion:{gte:65536}}) { total items { id appId appVersion owned } } }",
+      "data": {
+        "apps": {
+          "total": 0,
+          "items": []
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ apps(groupByAppId:true, owned:false) { total items { id appId appVersion owned } } }",
+      "data": {
+        "apps": {
+          "total": 0,
+          "items": []
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ apps(groupByAppId:true, filter:{owned:false, appVersion:{gte:65536}}) { total items { id appId appVersion owned } } }",
+      "data": {
+        "apps": {
+          "total": 0,
+          "items": []
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ apps(groupByAppId:true, owned:true) { total items { id appId appVersion owned } } }",
+      "data": {
+        "apps": {
+          "total": 0,
+          "items": []
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ apps(groupByAppId:true, filter:{owned:true, appVersion:{gte:65536}}) { total items { id appId appVersion owned } } }",
+      "data": {
+        "apps": {
+          "total": 0,
+          "items": []
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ apps(orderBy:{field:NAME,direction:ASC},page:1,pageSize:2) { total items { id appId appVersion } } }",
+      "data": {
+        "apps": {
+          "total": 0,
+          "items": []
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ apps(orderBy:{field:NAME,direction:DESC},page:1,pageSize:2) { total items { id appId appVersion } } }",
+      "data": {
+        "apps": {
+          "total": 0,
+          "items": []
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ apps(orderBy:{field:SIZE,direction:ASC},page:1,pageSize:2) { total items { id appId appVersion } } }",
+      "data": {
+        "apps": {
+          "total": 0,
+          "items": []
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ apps(orderBy:{field:SIZE,direction:DESC},page:1,pageSize:2) { total items { id appId appVersion } } }",
+      "data": {
+        "apps": {
+          "total": 0,
+          "items": []
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ apps(orderBy:{field:VERSION,direction:ASC},page:1,pageSize:2) { total items { id appId appVersion } } }",
+      "data": {
+        "apps": {
+          "total": 0,
+          "items": []
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ apps(orderBy:{field:VERSION,direction:DESC},page:1,pageSize:2) { total items { id appId appVersion } } }",
+      "data": {
+        "apps": {
+          "total": 0,
+          "items": []
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ files(orderBy:{field:NAME,direction:ASC},page:1,pageSize:2) { total items { id filename size } } }",
+      "data": {
+        "files": {
+          "total": 3,
+          "items": [
+            {
+              "id": "1",
+              "filename": "Alpha.nsp",
+              "size": 3000
+            },
+            {
+              "id": "2",
+              "filename": "Alpha[v65536].nsp",
+              "size": 1000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ files(orderBy:{field:NAME,direction:DESC},page:1,pageSize:2) { total items { id filename size } } }",
+      "data": {
+        "files": {
+          "total": 3,
+          "items": [
+            {
+              "id": "3",
+              "filename": "AlphaDLC.nsp",
+              "size": 2000
+            },
+            {
+              "id": "2",
+              "filename": "Alpha[v65536].nsp",
+              "size": 1000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ files(orderBy:{field:SIZE,direction:ASC},page:1,pageSize:2) { total items { id filename size } } }",
+      "data": {
+        "files": {
+          "total": 3,
+          "items": [
+            {
+              "id": "2",
+              "filename": "Alpha[v65536].nsp",
+              "size": 1000
+            },
+            {
+              "id": "3",
+              "filename": "AlphaDLC.nsp",
+              "size": 2000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ files(orderBy:{field:SIZE,direction:DESC},page:1,pageSize:2) { total items { id filename size } } }",
+      "data": {
+        "files": {
+          "total": 3,
+          "items": [
+            {
+              "id": "1",
+              "filename": "Alpha.nsp",
+              "size": 3000
+            },
+            {
+              "id": "3",
+              "filename": "AlphaDLC.nsp",
+              "size": 2000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ files(orderBy:{field:VERSION,direction:ASC},page:1,pageSize:2) { total items { id filename size } } }",
+      "data": {
+        "files": {
+          "total": 3,
+          "items": [
+            {
+              "id": "1",
+              "filename": "Alpha.nsp",
+              "size": 3000
+            },
+            {
+              "id": "2",
+              "filename": "Alpha[v65536].nsp",
+              "size": 1000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ files(orderBy:{field:VERSION,direction:DESC},page:1,pageSize:2) { total items { id filename size } } }",
+      "data": {
+        "files": {
+          "total": 3,
+          "items": [
+            {
+              "id": "3",
+              "filename": "AlphaDLC.nsp",
+              "size": 2000
+            },
+            {
+              "id": "2",
+              "filename": "Alpha[v65536].nsp",
+              "size": 1000
+            }
+          ]
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ titles(orderBy:{field:NAME,direction:ASC},page:1,pageSize:2) { total items { titleId name } } }",
+      "data": {
+        "titles": {
+          "total": 0,
+          "items": []
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ titles(orderBy:{field:NAME,direction:DESC},page:1,pageSize:2) { total items { titleId name } } }",
+      "data": {
+        "titles": {
+          "total": 0,
+          "items": []
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ titles(orderBy:{field:SIZE,direction:ASC},page:1,pageSize:2) { total items { titleId name } } }",
+      "data": {
+        "titles": {
+          "total": 0,
+          "items": []
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ titles(orderBy:{field:SIZE,direction:DESC},page:1,pageSize:2) { total items { titleId name } } }",
+      "data": {
+        "titles": {
+          "total": 0,
+          "items": []
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ titles(orderBy:{field:VERSION,direction:ASC},page:1,pageSize:2) { total items { titleId name } } }",
+      "data": {
+        "titles": {
+          "total": 0,
+          "items": []
+        }
+      }
+    },
+    {
+      "admin": true,
+      "shop": false,
+      "query": "{ titles(orderBy:{field:VERSION,direction:DESC},page:1,pageSize:2) { total items { titleId name } } }",
+      "data": {
+        "titles": {
+          "total": 0,
+          "items": []
+        }
+      }
+    }
+  ]
+}

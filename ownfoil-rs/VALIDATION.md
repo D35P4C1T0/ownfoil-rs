@@ -81,3 +81,29 @@ The default suite passed 117 unit/integration tests and 8 route-contract tests
 was then run separately and passed. Content/key fixture tests remain unrun.
 Formatting, strict Clippy, and `git diff --check` also passed.
 See [ARM deployment](../docs/ARM.md) for board-side startup and smoke checks.
+
+## September 17 follow-up
+
+- Pinned Python upstream: 141 GraphQL tests passed (`test_gql_graph`,
+  `test_gql_catalogue`, `test_gql_app_cards`, `test_gql_etag`, `test_gql_mutations`).
+- Rust compares 126 exact GraphQL responses across admin/shop roles against
+  `tests/fixtures/graphql_parity.json`. Includes nested hydration, ownership,
+  version filters, ordering, pagination, statistics, and task reads.
+- NCZ solid/block fixtures cover PFS0/IVFC decryption probes, wrong keys,
+  cancellation, declared-size limits, extended-CTR counter buckets, multiple
+  buckets, normal-counter metadata tails, and malformed bucket bounds/counts.
+- Default suite: 122 passed, 3 optional tests ignored; 8 route tests passed.
+  Reference Zstandard interoperability passed separately. Strict Clippy passed.
+
+Regenerate the response fixture using a checkout of
+`a1ex4/ownfoil@0cce4bbc684b30930b1576847c8c8fb5202114bf` and a Python environment
+with its requirements plus pytest installed:
+
+```sh
+python scripts/parity/capture_graphql.py /path/to/pinned-ownfoil ownfoil-rs/tests/fixtures/graphql_parity.json
+cargo test --locked graphql_matches_pinned_upstream_response_matrix
+```
+
+The synthetic fixture derives from upstream's `tests/test_gql_graph.py` under
+AGPL-3.0. It contains no commercial content or console keys. This comparison does
+not replace hardware/client checks or the complete golden HTTP matrix.

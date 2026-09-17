@@ -264,7 +264,7 @@ impl GraphData {
                 .map(|(key, (count, size))| json!({"key":key,"count":count,"size":size}))
                 .collect::<Vec<_>>()
         };
-        let types=["BASE","UPDATE","DLC"].map(|key|json!({"key":key,"count":self.apps.iter().filter(|a|a["appType"]==key).count(),"owned":self.apps.iter().filter(|a|a["appType"]==key && a["owned"]==true).count()}));
+        let types=["BASE","DLC","UPDATE"].into_iter().filter(|key| self.apps.iter().any(|app| app["appType"] == *key)).map(|key|json!({"key":key,"count":self.apps.iter().filter(|a|a["appType"]==key).count(),"owned":self.apps.iter().filter(|a|a["appType"]==key && a["owned"]==true).count()})).collect::<Vec<_>>();
         let verdicts = [
             "VALID",
             "REPACK",
@@ -811,6 +811,7 @@ mod tests {
         }
         let stats = data.stats();
         assert_eq!(stats["totalTitles"], 3);
+        assert_eq!(stats["appsByType"], json!([]));
         for field in ["ownedTitles", "completeTitles", "upToDateTitles"] {
             assert_eq!(stats[field], 1);
         }
