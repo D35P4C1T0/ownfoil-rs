@@ -1,130 +1,91 @@
 # ownfoil-rs
 
-Rust rewrite of [Ownfoil](https://github.com/a1ex4/ownfoil): a self-hosted Nintendo
-Switch game-shop library for Tinfoil, Aerofoil/CyberFoil, Sphaira, and browsers.
-Parity work targets Ownfoil v2.4.1, pinned upstream commit `0cce4bbc684b30930b1576847c8c8fb5202114bf`.
-
-Current release: **v0.3.0**.
+A self-hosted Nintendo Switch library and game shop, written in Rust, with a
+**built-in Web UI**. Browse and manage your collection from a browser, then connect
+Tinfoil, Aerofoil/CyberFoil, or Sphaira to download games.
 
 ![ownfoil-rs banner](ownfoil-rs/assets/banner.png)
 
-## Features
+## What you can do
 
-- NSP, NSZ, XCI, and XCZ discovery with console-key CNMT identification and
-  filename fallback
-- Durable SQLite catalog, users, scan state, stable file IDs, and migration from
-  an existing Ownfoil database
-- Multiple libraries, watcher, scheduler, organization templates, dry-run preview,
-  crash journal, and old-update cleanup
-- Ownfoil TitleDB download/cache with titles, versions, icons, banners, languages,
-  missing content, and completeness status
-- Tinfoil encrypted shops and `Hauth`, CyberFoil JSON, Sphaira directory listings,
-  browser library/setup/settings pages, and resumable byte-range downloads
-- Scrypt users with separate admin, shop, and backup roles; public or private shops
-- Ownfoil-compatible YAML settings and Docker volume layout
-- GraphQL queries and admin mutations; live task/worker events and statistics
-- Durable background jobs, configurable watcher, and TitleDB scheduling
-- Rust NSZ/XCZ solid and block compression, decompression, signature and hash
-  verification; no Python helpers or C Zstandard dependency
+- **Manage everything in your browser:** browse and filter your library, edit
+  metadata, manage users and settings, and monitor background tasks and statistics.
+- **Keep your collection organized:** scan multiple libraries, watch for new files,
+  preview file organization, and clean up old updates.
+- **Track what you own:** TitleDB metadata, artwork, available updates and DLC,
+  missing content, and collection completeness.
+- **Serve your shop:** public or private access, separate user permissions,
+  encrypted Tinfoil shops, and resumable downloads.
+- **Work with NSP, NSZ, XCI, and XCZ:** identify content, compress or decompress
+  files, and verify signatures and hashes using your console keys.
+- **Bring an existing Ownfoil setup:** compatible YAML settings, Docker volume
+  layout, and database migration. GraphQL is available for integrations.
 
-See [ROADMAP.md](ROADMAP.md) for the feature ledger and remaining
-hardware/deployment validation gates. Intentional differences are documented in
-[ownfoil-rs/PARITY_NOTES.md](ownfoil-rs/PARITY_NOTES.md).
+## Quick start · Docker Compose
 
-## Docker Compose
+From a checkout of this repository:
 
-Copy the environment template, set your game directory and initial administrator,
-then start the service:
+1. Copy the configuration template:
 
-```bash
-cp .env.example .env
-# Edit GAMES_PATH and replace the example password in .env.
-docker compose up --build -d
-```
+   ```sh
+   cp .env.example .env
+   ```
 
-For a one-off start without an `.env` file:
+2. Edit `.env`: set `GAMES_PATH` to your library's absolute path. For direct
+   access over plain HTTP, uncomment `OWNFOIL_INSECURE_ADMIN_COOKIE=true`;
+   leave it unset when using HTTPS.
+3. Start the server:
 
-```bash
-GAMES_PATH=/mnt/iso \
-USER_ADMIN_NAME=admin \
-USER_ADMIN_PASSWORD='replace-this-password' \
-OWNFOIL_INSECURE_ADMIN_COOKIE=true \
-docker compose up --build -d
-```
+   ```sh
+   docker compose up --build -d
+   ```
 
-The production layout is:
+4. Open **[http://localhost:8465](http://localhost:8465)**, or
+   `http://<server-ip>:8465` from another device. Create your first administrator
+   and manage your library in the Web UI.
+5. Open **Setup** (`/setup`) for client connection instructions. Upload your
+   console keys in **Settings** when using content identification, verification,
+   or conversion.
 
-- `/games` — game libraries
-- `/app/config/settings.yaml` and `/app/config/keys.txt`
-- `/app/data/ownfoil.db` and TitleDB cache
-- HTTP port `8465`
+Configuration and database/cache persist in `./config` and `./data`. Keep both
+when upgrading. The library is writable for uploads and organization; set
+`GAMES_MOUNT_MODE=ro` in `.env` for serving only. See [.env.example](.env.example)
+for port, directory, and first-start administrator options.
 
-`GAMES_PATH`, `CONFIG_PATH`, `DATA_PATH`, `OWNFOIL_PORT`, `PUID`, and `PGID` are
-configurable through `.env`. Game storage is writable by default so uploads and
-the organizer work; set `GAMES_MOUNT_MODE=ro` for a serving-only library. Set
-`USER_ADMIN_NAME` and `USER_ADMIN_PASSWORD` for first-start admin bootstrap, or
-create the first administrator in the browser. Optional guest bootstrap uses
-`USER_GUEST_NAME` and `USER_GUEST_PASSWORD` after an administrator exists.
+View logs with `docker compose logs -f ownfoil`; stop with `docker compose down`.
 
-Admin cookies are secure by default. Set `OWNFOIL_INSECURE_ADMIN_COOKIE=true` only
-when accessing the admin UI directly over plain HTTP; leave it unset behind HTTPS.
+## Other ways to run
 
-Useful lifecycle commands:
+- **Native:** Rust 1.97+ and a C toolchain are required. For local HTTP access:
 
-```bash
-docker compose ps
-docker compose logs -f ownfoil
-docker compose stop
-docker compose down
-```
+  ```sh
+  OWNFOIL_INSECURE_ADMIN_COOKIE=true cargo run --release -p ownfoil-rs -- \
+    --bind 0.0.0.0:8465 --library-folder ./library \
+    --settings ./config/settings.yaml
+  ```
 
-## Native Run
+  Open the same Web UI on port `8465`. Native data lives in `./data`.
+- **ARM boards:** [builds, containers, systemd, and small-board settings](docs/ARM.md).
+- **Kubernetes:** [Helm chart](chart/) and [deployment values](chart/values.yaml).
 
-Rust 1.92 or newer is required.
+## Project status & contributing
 
-```bash
-cargo run -p ownfoil-rs -- \
-  --bind 0.0.0.0:8465 \
-  --library-folder ./library \
-  --settings ./config/settings.yaml
-```
+Rust port of [Ownfoil](https://github.com/a1ex4/ownfoil), targeting v2.4.1 parity.
+Full parity and validation on all supported clients are still in progress. See
+[roadmap](ROADMAP.md), [known differences](ownfoil-rs/PARITY_NOTES.md), and
+[validation results](ownfoil-rs/VALIDATION.md).
 
-On a native checkout, data is stored under `./data`; container defaults activate
-when the settings directory is `/app/config`. CLI/runtime TOML values are startup
-overrides, while `settings.yaml` is the canonical mutable Ownfoil configuration.
-Legacy `auth.toml` credentials can still be imported with `--auth-file`.
+Before submitting a change:
 
-Point a client at `http://<server-ip>:8465`; use `/base`, `/update`, `/dlc`, or
-`/multi` for filtered shops. Visit `/setup` for host-specific instructions and
-`/settings` for administration.
-
-## Helm
-
-The chart in `chart/` provides separate persistent volumes for configuration,
-data, and games:
-
-```bash
-helm upgrade --install ownfoil ./chart \
-  --set image.repository=ghcr.io/d35p4c1t0/ownfoil-rs \
-  --set image.tag=v0.3.0
-```
-
-Review `chart/values.yaml` before deployment, especially persistence, ingress,
-resource limits, and bootstrap environment variables.
-
-## Development
-
-```bash
+```sh
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets --locked -- -D warnings
 cargo test --workspace --all-targets --locked
 ```
 
-Run `./scripts/setup-hooks.sh` once to enable the repository pre-push checks.
+Optional: `./scripts/setup-hooks.sh` enables repository pre-push checks.
 
-See [VALIDATION.md](VALIDATION.md) for the v0.3.0 validation record.
+## License & credits
 
-## Attribution
-
-Behavioral parity is based on Ownfoil by a1ex4. See `LICENSE` and preserve the
-project's AGPL source-availability obligations when distributing modified builds.
+Based on Ownfoil by [a1ex4](https://github.com/a1ex4/ownfoil). See the
+[project license](ownfoil-rs/LICENSE) and [third-party notices](ownfoil-rs/third_party/README.md).

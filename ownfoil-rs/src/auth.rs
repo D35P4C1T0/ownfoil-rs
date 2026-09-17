@@ -106,7 +106,7 @@ impl AuthSettings {
                 password.as_bytes().ct_eq(known_password.as_bytes()).into()
             }
             Credential::Scrypt(hash) => {
-                PasswordHash::new(hash).ok().is_some_and(|parsed| {
+                PasswordHash::new(hash).is_ok_and(|parsed| {
                     Scrypt.verify_password(password.as_bytes(), &parsed).is_ok()
                 }) || verify_werkzeug_scrypt(password, hash)
             }
