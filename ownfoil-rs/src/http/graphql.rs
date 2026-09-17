@@ -435,7 +435,7 @@ async fn dispatch(
     is_get: bool,
 ) -> Result<Response, ApiError> {
     let (can_admin, can_shop) = graph_access(&state, &headers, &jar)?;
-    let mutation = async_graphql_parser::parse_query(&request.query).ok().is_some_and(|doc| {
+    let mutation = async_graphql_parser::parse_query(&request.query).is_ok_and(|doc| {
         doc.operations.iter().any(|(name, op)| {
             request
                 .operation_name

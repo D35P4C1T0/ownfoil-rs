@@ -106,11 +106,14 @@ where
 {
     type Rejection = Infallible;
 
-    async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
+    fn from_request_parts(
+        parts: &mut Parts,
+        _state: &S,
+    ) -> impl std::future::Future<Output = Result<Self, Self::Rejection>> + Send {
         let addr = parts.extensions.get::<SocketAddr>().copied().or_else(|| {
             parts.extensions.get::<axum::extract::ConnectInfo<SocketAddr>>().map(|c| c.0)
         });
-        Ok(Self(addr))
+        std::future::ready(Ok(Self(addr)))
     }
 }
 
@@ -329,6 +332,7 @@ fn shop_for_client(shop: &crate::shop::ShopConfig, client: ClientKind) -> crate:
 }
 
 #[allow(clippy::significant_drop_tightening)]
+#[allow(clippy::result_large_err)] // Return the ready HTTP response without an extra allocation.
 async fn verify_client_host(
     state: &AppState,
     client: ClientKind,
