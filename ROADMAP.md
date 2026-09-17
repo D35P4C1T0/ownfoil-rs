@@ -111,8 +111,8 @@ remains, `[ ]` not implemented.
 
 - [x] `/profile` and `backup_access` retain pinned upstream placeholder behavior;
   real save backup/sync is an extension for a future release.
-- [x] `compress_files` remains disabled because the pinned upstream does not
-  implement conversion. Existing NSZ/XCZ files are still identified and served.
+- [x] Native `compress_file`/`decompress_file` tasks implement v2.4.1 conversion.
+  The earlier pin's disabled conversion placeholder no longer applies.
 
 ## v0.3.0 Release Validation
 
@@ -146,3 +146,26 @@ release is an integration preview while Switch-client, complete golden-matrix,
 and full live TitleDB validation remain open.
 Intentional security and Rust-extension differences live in
 `ownfoil-rs/PARITY_NOTES.md`.
+
+## Follow-up implementation (September 2026)
+
+The partial working-tree changes were retained after comparison with the pinned
+upstream task and GraphQL implementations. This follow-up adds:
+
+- [x] Parent/child task fan-out, scoped maintenance, file lifecycle jobs, reruns,
+  recursive cancellation, and preservation of active parents' child history.
+- [x] Independent GraphQL roles; grouped app ownership, filtering, ordering,
+  tracked-vs-TitleDB title populations, relationships, and statistics regressions.
+- [x] NCA PFS0/IVFC decryption probes, ticket signature layouts, conservative
+  modified-content classification, and malformed NCZ block rejection.
+- [x] Streaming hash-verification progress and cooperative cancellation;
+  signature-only rechecks preserve existing hash verdicts.
+- [x] ARM deployment instructions in [docs/ARM.md](docs/ARM.md).
+
+The external validation gates and codec differences in the parity notes remain.
+
+- [x] Bounded NCZ decryption probes sharing the reconstructed hash pass.
+- [x] Conventional BKTR extended-CTR compression with malformed-table and
+  solid/block round-trip coverage.
+- [x] 126 pinned-upstream GraphQL response comparisons, including relationship
+  hydration depth and nested ordering.

@@ -168,7 +168,7 @@ fn encrypt_ecb_zero_padded(input: &[u8], key: &[u8; 16]) -> Vec<u8> {
     let mut padded = vec![0_u8; block_count * 16];
     padded[..input.len()].copy_from_slice(input);
 
-    for chunk in padded.chunks_exact_mut(16) {
+    for chunk in padded.as_chunks_mut::<16>().0 {
         cipher.encrypt_block(GenericArray::from_mut_slice(chunk));
     }
 

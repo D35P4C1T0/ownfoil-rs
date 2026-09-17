@@ -1,4 +1,6 @@
 //! Native NCZ section transform, solid Zstandard and independently compressed blocks.
+#[path = "bktr.rs"]
+mod bktr;
 use super::archive::{Entry, number, reader, u32_at, u64_at};
 use crate::settings::CompressionSettings;
 use aes::cipher::{BlockEncrypt, KeyInit};
@@ -22,13 +24,17 @@ fn crypt(bytes: &mut [u8], offset: u64, section: &Section) {
     if !matches!(section.crypto, 3 | 4) {
         return;
     }
-    let cipher = aes::Aes128::new((&section.key).into());
+    crypt_ctr(bytes, offset, &section.key, section.counter);
+}
+
+pub(super) fn crypt_ctr(bytes: &mut [u8], offset: u64, key: &[u8; 16], counter: [u8; 16]) {
+    let cipher = aes::Aes128::new(key.into());
     let mut at = 0;
     while at < bytes.len() {
         let position = offset + at as u64;
-        let mut counter = section.counter;
-        counter[8..].copy_from_slice(&(position >> 4).to_be_bytes());
-        let mut block = counter.into();
+        let mut block_counter = counter;
+        block_counter[8..].copy_from_slice(&(position >> 4).to_be_bytes());
+        let mut block: aes::Block = block_counter.into();
         cipher.encrypt_block(&mut block);
         let skip = (position % 16) as usize;
         let count = (16 - skip).min(bytes.len() - at);
@@ -72,18 +78,26 @@ fn sections(
                 counter: [0; 16],
             });
         }
-        // Extended CTR has per-subsection counters. Preserve those encrypted bytes verbatim.
-        // This remains a valid NCZ and avoids changing unsupported crypto layouts.
-        let crypto = if header.encryption_type as u8 == 3 && key.is_some() { 3 } else { 1 };
+        let encryption = header.encryption_type as u8;
+        let crypto = if matches!(encryption, 3 | 4) && key.is_some() { 3 } else { 1 };
         let mut counter = [0; 16];
         counter[..8].copy_from_slice(&header.ctr.to_be_bytes());
-        result.push(Section {
+        let section = Section {
             offset: start,
             size: end - start,
             crypto,
             key: key.unwrap_or([0; 16]),
             counter,
-        });
+        };
+        if encryption == 4 && key.is_some() {
+            ensure!(
+                u64::from(fs.start_offset) * 0x200 == start,
+                "Extended CTR overlaps NCA header"
+            );
+            result.extend(bktr::sections(file, entry, &section, &header.patch_info)?);
+        } else {
+            result.push(section);
+        }
         cursor = end;
     }
     if cursor < entry.size {
@@ -95,7 +109,7 @@ fn sections(
             counter: [0; 16],
         });
     }
-    ensure!(!result.is_empty(), "NCA has no data sections");
+    ensure!(!result.is_empty() && result.len() <= 100_000, "Invalid NCA section count");
     Ok(result)
 }
 
@@ -147,6 +161,7 @@ pub fn compress(
     block: bool,
 ) -> anyhow::Result<()> {
     ensure!(entry.size > HEADER, "NCA too small to compress");
+    ensure!((14..=32).contains(&settings.block_size_exponent), "Invalid NCZ block size");
     let sections = sections(file, entry, keys, title_keys)?;
     let mut input = reader(file, entry)?;
     let mut header = vec![0; 0x4000];
@@ -298,6 +313,18 @@ impl Read for Blocks {
             return Err(std::io::Error::other("Truncated NCZ block"));
         }
         self.current_left -= n as u64;
+        if self.current_left == 0 {
+            let mut extra = [0];
+            if self
+                .current
+                .as_mut()
+                .ok_or_else(|| std::io::Error::other("Missing NCZ stream"))?
+                .read(&mut extra)?
+                != 0
+            {
+                return Err(std::io::Error::other("NCZ block exceeds declared size"));
+            }
+        }
         Ok(n)
     }
 }
@@ -359,11 +386,12 @@ pub fn decompress(file: &File, entry: &Entry, out: &mut dyn Write) -> anyhow::Re
         );
         let mut sizes = Vec::new();
         let mut sum = 0u64;
-        for _ in 0..count {
+        for index in 0..count {
             let mut bytes = [0; 4];
             input.read_exact(&mut bytes)?;
             let size = u32::from_le_bytes(bytes);
-            ensure!(size > 0, "Empty NCZ block");
+            let length = (total - index as u64 * block_size).min(block_size);
+            ensure!(size > 0 && u64::from(size) <= length, "Invalid NCZ block length");
             sum += u64::from(size);
             sizes.push(size);
         }
@@ -453,6 +481,129 @@ mod tests {
         file.write_all(&bytes)?;
         Ok((file, Entry { name: "test.nca".into(), offset: 0, size: size as u64 }, keys, bytes))
     }
+    fn extended_fixture(
+        mutate: impl FnOnce(&mut [u8], &mut [u8]),
+    ) -> anyhow::Result<(tempfile::NamedTempFile, Entry, Keyset, Vec<u8>)> {
+        let (mut file, entry, keys, mut bytes) = fixture(false)?;
+        let mut header =
+            nx_archive::formats::nca::decrypt_with_header_key(&bytes[..0xC00], &keys, 0x200, 0)
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        header[0x404] = 4;
+        let patch = &mut header[0x500..0x540];
+        patch[0x20..0x28].copy_from_slice(&0x10000u64.to_le_bytes());
+        patch[0x28..0x30].copy_from_slice(&0x8000u64.to_le_bytes());
+        patch[0x30..0x34].copy_from_slice(b"BKTR");
+        patch[0x34..0x38].copy_from_slice(&1u32.to_le_bytes());
+        patch[0x38..0x3c].copy_from_slice(&2u32.to_le_bytes());
+        let table = &mut bytes[0x14000..0x20000];
+        table.fill(0);
+        table[4..8].copy_from_slice(&1u32.to_le_bytes());
+        table[8..16].copy_from_slice(&0x10000u64.to_le_bytes());
+        table[0x4004..0x4008].copy_from_slice(&2u32.to_le_bytes());
+        table[0x4008..0x4010].copy_from_slice(&0x10000u64.to_le_bytes());
+        table[0x401c..0x4020].copy_from_slice(&9u32.to_le_bytes());
+        table[0x4020..0x4028].copy_from_slice(&0x8000u64.to_le_bytes());
+        table[0x402c..0x4030].copy_from_slice(&11u32.to_le_bytes());
+        mutate(patch, table);
+        for (start, end, generation) in
+            [(0x4000, 0xc000, 9u64), (0xc000, 0x14000, 11), (0x14000, 0x24000, 7)]
+        {
+            let mut counter = [0; 16];
+            counter[..8].copy_from_slice(&generation.to_be_bytes());
+            crypt_ctr(&mut bytes[start..end], start as u64, &[0x22; 16], counter);
+        }
+        bytes[..0xC00].copy_from_slice(&nx_archive::formats::nca::encrypt_with_header_key(
+            &header, &keys, 0x200, 0,
+        ));
+        file.rewind()?;
+        file.write_all(&bytes)?;
+        Ok((file, entry, keys, bytes))
+    }
+
+    #[test]
+    fn extended_ctr_subsections_roundtrip_in_solid_and_block_ncz() -> anyhow::Result<()> {
+        let (file, entry, keys, expected) = extended_fixture(|_, _| {})?;
+        let titles = TitleKeys::new();
+        let layout = sections(file.as_file(), &entry, &keys, &titles)?;
+        assert_eq!(layout.len(), 3);
+        assert_eq!(layout.iter().map(|s| s.crypto).collect::<Vec<_>>(), vec![4, 4, 3]);
+        for (section, generation) in layout.iter().zip([9u32, 11, 7]) {
+            assert_eq!(section.counter[4..8], generation.to_be_bytes());
+        }
+        for block in [false, true] {
+            let mut compressed = tempfile::tempfile()?;
+            compress(
+                file.as_file(),
+                &entry,
+                &mut compressed,
+                &keys,
+                &titles,
+                &CompressionSettings { level: 1, block_size_exponent: 14, ..Default::default() },
+                block,
+            )?;
+            let encoded =
+                Entry { name: "test.ncz".into(), offset: 0, size: compressed.metadata()?.len() };
+            let mut restored = Vec::new();
+            decompress(&compressed, &encoded, &mut restored)?;
+            assert_eq!(restored, expected);
+            assert!(
+                encoded.size < entry.size / 2,
+                "extended encryption should expose compressible plaintext"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn extended_ctr_handles_multiple_buckets_and_metadata_tail() -> anyhow::Result<()> {
+        for multiple in [false, true] {
+            let (file, entry, keys, _) = extended_fixture(|patch, table| {
+                if multiple {
+                    patch[0x28..0x30].copy_from_slice(&0xc000u64.to_le_bytes());
+                    table[4..8].copy_from_slice(&2u32.to_le_bytes());
+                    table[24..32].copy_from_slice(&0x8000u64.to_le_bytes());
+                    table[0x4004..0x4008].copy_from_slice(&1u32.to_le_bytes());
+                    table[0x4008..0x4010].copy_from_slice(&0x8000u64.to_le_bytes());
+                    table[0x8004..0x8008].copy_from_slice(&1u32.to_le_bytes());
+                    table[0x8008..0x8010].copy_from_slice(&0x10000u64.to_le_bytes());
+                    table[0x8010..0x8018].copy_from_slice(&0x8000u64.to_le_bytes());
+                    table[0x801c..0x8020].copy_from_slice(&11u32.to_le_bytes());
+                } else {
+                    // The normal-counter metadata tail can start before the counter table.
+                    table[0x4008..0x4010].copy_from_slice(&0xc000u64.to_le_bytes());
+                }
+            })?;
+            let layout = sections(file.as_file(), &entry, &keys, &TitleKeys::new())?;
+            assert_eq!(layout.len(), 3);
+            assert_eq!(layout.iter().map(|section| section.size).sum::<u64>(), entry.size - HEADER);
+            for adjacent in layout.windows(2) {
+                assert_eq!(adjacent[0].offset + adjacent[0].size, adjacent[1].offset);
+            }
+            assert_eq!(layout[2].offset, if multiple { 0x14000 } else { 0x10000 });
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn extended_ctr_rejects_malformed_bucket_tables() -> anyhow::Result<()> {
+        for mutation in 0..7 {
+            let (file, entry, keys, _) = extended_fixture(|patch, table| match mutation {
+                0 => patch[0x30..0x34].copy_from_slice(b"FAIL"),
+                1 => patch[0x28..0x30].copy_from_slice(&u64::MAX.to_le_bytes()),
+                2 => table[4..8].copy_from_slice(&u32::MAX.to_le_bytes()),
+                3 => table[0x4004..0x4008].copy_from_slice(&u32::MAX.to_le_bytes()),
+                4 => table[0x4020..0x4028].copy_from_slice(&0u64.to_le_bytes()),
+                5 => table[8..16].copy_from_slice(&0x18000u64.to_le_bytes()),
+                _ => patch[0x38..0x3c].copy_from_slice(&3u32.to_le_bytes()),
+            })?;
+            assert!(
+                sections(file.as_file(), &entry, &keys, &TitleKeys::new()).is_err(),
+                "mutation {mutation}"
+            );
+        }
+        Ok(())
+    }
+
     /// Optional independent oracle; the application never invokes this executable.
     #[test]
     #[ignore = "requires the reference zstd CLI for interoperability validation"]
@@ -512,6 +663,32 @@ mod tests {
     }
 
     #[test]
+    fn ctr_matches_nx_archive_reader_at_unaligned_offsets() -> anyhow::Result<()> {
+        let key = [0x37; 16];
+        let ctr = 0x1234_5678_9abc_def0u64;
+        let expected = (0..79u8).collect::<Vec<_>>();
+        for offset in [0x4200u64, 0x4203, 0x420f] {
+            let mut counter = [0; 16];
+            counter[..8].copy_from_slice(&ctr.to_be_bytes());
+            let mut encrypted = expected.clone();
+            crypt_ctr(&mut encrypted, offset, &key, counter);
+            let mut bytes = vec![0; usize::try_from(offset)?];
+            bytes.extend(encrypted);
+            bytes.extend([0; 16]);
+            let mut reader = nx_archive::io::Aes128CtrReader::new(
+                std::io::Cursor::new(bytes),
+                offset,
+                ctr,
+                key.to_vec(),
+            );
+            let mut actual = vec![0; expected.len()];
+            reader.read_exact(&mut actual)?;
+            assert_eq!(actual, expected);
+        }
+        Ok(())
+    }
+
+    #[test]
     fn solid_and_block_roundtrip_plain_and_ctr_sections() -> anyhow::Result<()> {
         for ctr in [false, true] {
             for block in [false, true] {
@@ -560,6 +737,107 @@ mod tests {
             decompress(&file, &Entry { name: "bad.ncz".into(), offset: 0, size }, &mut Vec::new())
                 .is_err()
         );
+        Ok(())
+    }
+
+    fn block_fixture(
+        mutate: impl FnOnce(&mut Vec<u8>, usize) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
+        let (file, entry, keys, _) = fixture(false)?;
+        let mut out = tempfile::tempfile()?;
+        compress(
+            file.as_file(),
+            &entry,
+            &mut out,
+            &keys,
+            &TitleKeys::new(),
+            &CompressionSettings { level: 1, block_size_exponent: 20, ..Default::default() },
+            true,
+        )?;
+        let mut bytes = Vec::new();
+        out.rewind()?;
+        out.read_to_end(&mut bytes)?;
+        let count = u64_at(&bytes, 0x4008)? as usize;
+        let table = 0x4010 + count * 64 + 24;
+        mutate(&mut bytes, table)?;
+        out.set_len(0)?;
+        out.rewind()?;
+        out.write_all(&bytes)?;
+        out.rewind()?;
+        let size = out.metadata()?.len();
+        let entry = Entry { name: "bad.ncz".into(), offset: 0, size };
+        assert!(decompress(&out, &entry, &mut Vec::new()).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_zero_length_and_oversized_ncz_blocks() -> anyhow::Result<()> {
+        block_fixture(|bytes, table| {
+            bytes[table..table + 4].copy_from_slice(&0u32.to_le_bytes());
+            Ok(())
+        })?;
+        block_fixture(|bytes, table| {
+            bytes[table..table + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+            Ok(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_compressed_block_expansion_past_declared_length() -> anyhow::Result<()> {
+        block_fixture(|bytes, table| {
+            let total = usize::try_from(u64_at(bytes, table - 8)?)?;
+            let mut stream =
+                encoder(Vec::new(), &CompressionSettings { level: 1, ..Default::default() })?;
+            stream.write_all(&vec![0x42; total + 1])?;
+            let compressed = stream.finish()?;
+            bytes[table..table + 4]
+                .copy_from_slice(&u32::try_from(compressed.len())?.to_le_bytes());
+            bytes.truncate(table + 4);
+            bytes.extend(compressed);
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn rejects_raw_block_larger_than_remaining_output() -> anyhow::Result<()> {
+        block_fixture(|bytes, table| {
+            let total = usize::try_from(u64_at(bytes, table - 8)?)?;
+            bytes[table..table + 4].copy_from_slice(&u32::try_from(total + 1)?.to_le_bytes());
+            bytes.resize(table + 4 + total + 1, 0);
+            Ok(())
+        })
+    }
+
+    #[test]
+    fn rejects_invalid_compression_exponent_before_writing() -> anyhow::Result<()> {
+        let (file, entry, keys, _) = fixture(false)?;
+        for exponent in [0, 13, 33, 64, u32::MAX] {
+            let mut out = tempfile::tempfile()?;
+            assert!(
+                compress(
+                    file.as_file(),
+                    &entry,
+                    &mut out,
+                    &keys,
+                    &TitleKeys::new(),
+                    &CompressionSettings { block_size_exponent: exponent, ..Default::default() },
+                    true
+                )
+                .is_err()
+            );
+            assert_eq!(out.metadata()?.len(), 0);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_ncz_block_total_mismatch() -> anyhow::Result<()> {
+        block_fixture(|bytes, table| {
+            let total = u64_at(bytes, table - 8)?;
+            bytes[table - 8..table].copy_from_slice(&(total + 1).to_le_bytes());
+            Ok(())
+        })?;
         Ok(())
     }
 }
