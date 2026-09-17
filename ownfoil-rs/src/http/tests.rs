@@ -912,6 +912,113 @@ mod tests {
         Ok(())
     }
     #[tokio::test]
+    #[allow(clippy::too_many_lines)] // Seed the upstream fixture and compare all role-specific responses.
+    async fn graphql_matches_pinned_upstream_response_matrix() -> Result<()> {
+        let fixture: Value =
+            serde_json::from_str(include_str!("../../tests/fixtures/graphql_parity.json"))?;
+        let directory = tempdir()?;
+        let storage = crate::storage::Storage::open(directory.path().join("parity.db")).await?;
+        let seed = fixture.clone();
+        storage.with_connection(move |conn| {
+            conn.execute("INSERT INTO libraries(id,path) VALUES(1,'/parity/games')", [])?;
+            conn.execute("INSERT INTO titles(id,title_id,have_base,up_to_date,complete) VALUES(1,?1,1,0,1)", [seed["title"].as_str()])?;
+            for (index, app) in seed["apps"].as_array().unwrap().iter().enumerate() {
+                let id = i64::try_from(index + 1).unwrap();
+                conn.execute("INSERT INTO apps(id,title_id,app_id,app_type,app_version,owned) VALUES(?1,1,?2,?3,?4,?5)", rusqlite::params![id,app[0].as_str(),app[1].as_str(),app[2].as_str(),app[3].as_bool()])?;
+                if let Some(filename) = app[4].as_str() {
+                    conn.execute("INSERT INTO files(library_id,path,folder,name,ext,size,title_id,identification_status) VALUES(1,?1,'/parity/games',?1,'nsp',?2,?3,'identified')", rusqlite::params![filename, app[5].as_i64(),seed["title"].as_str()])?;
+                    conn.execute("INSERT INTO app_files(app_id,file_id) VALUES(?1,?2)", [id,conn.last_insert_rowid()])?;
+                }
+            }
+            conn.execute("INSERT INTO tasks(id,task_name,status,completion_pct,input_json) VALUES(1,'scan_libraries','completed',100,'{\"path\": \"/games\"}')", [])?;
+            conn.execute("INSERT INTO tasks(id,parent_id,task_name,status,completion_pct) VALUES(2,1,'scan_library','running',40)", [])?;
+            Ok(())
+        }).await?;
+        let mut files = Vec::new();
+        for app in fixture["apps"].as_array().unwrap() {
+            if let Some(filename) = app[4].as_str() {
+                let kind = match app[1].as_str().unwrap() {
+                    "UPDATE" => ContentKind::Update,
+                    "DLC" => ContentKind::Dlc,
+                    _ => ContentKind::Base,
+                };
+                files.push(ContentFile {
+                    id: files.len() + 1,
+                    library_root: "/parity/games".into(),
+                    relative_path: filename.into(),
+                    name: filename.into(),
+                    size: app[5].as_u64().unwrap(),
+                    title_id: Some(app[0].as_str().unwrap().into()),
+                    version: Some(app[2].as_str().unwrap().parse()?),
+                    kind,
+                    identified_contents: Vec::new(),
+                });
+            }
+        }
+        let auth = AuthSettings::from_users(Vec::new());
+        let sessions = SessionStore::new(24);
+        for (name, admin_access, shop_access) in
+            [("full", true, true), ("shop", false, true), ("admin", true, false)]
+        {
+            auth.upsert_hashed_user(
+                name.into(),
+                "unused-session-test".into(),
+                crate::auth::AuthRoles { admin_access, shop_access, backup_access: false },
+            );
+        }
+        let mut state = test_app_state(
+            Catalog::from_files(files),
+            "/parity/games".into(),
+            auth,
+            sessions.clone(),
+        );
+        state.storage = Some(storage);
+        state.titledb = TitleDb::from_entries(fixture["metadata"].as_object().unwrap().iter().map(
+            |(id, record)| {
+                (
+                    id.clone(),
+                    TitleInfo {
+                        name: record["name"].as_str().map(str::to_owned),
+                        record: record.as_object().unwrap().clone(),
+                        ..Default::default()
+                    },
+                )
+            },
+        ));
+        // Exercise the real endpoint without the unrelated 50-request burst limiter.
+        let server = TestServer::new(
+            axum::Router::new()
+                .route("/api/graphql", axum::routing::post(crate::http::graphql::post))
+                .with_state(state),
+        )?;
+        let mut failures = Vec::new();
+        for (index, case) in fixture["cases"].as_array().unwrap().iter().enumerate() {
+            let name = if case["admin"] == false {
+                "shop"
+            } else if case["shop"] == false {
+                "admin"
+            } else {
+                "full"
+            };
+            let response = server
+                .post("/api/graphql")
+                .add_header("Cookie", format!("ownfoil_session={}", sessions.create(name.into())))
+                .json(&serde_json::json!({"query":case["query"]}))
+                .await;
+            response.assert_status_ok();
+            let actual = response.json::<Value>();
+            if actual.get("errors").is_some() || actual["data"] != case["data"] {
+                failures.push(format!(
+                    "case {index} ({name}): {}\nexpected: {}\nactual: {}",
+                    case["query"], case["data"], actual
+                ));
+            }
+        }
+        assert!(failures.is_empty(), "{} mismatches:\n{}", failures.len(), failures.join("\n"));
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn graphql_contract_queries_validate_and_paginate() -> Result<()> {
         let state = test_app_state(
             Catalog::from_files(Vec::new()),

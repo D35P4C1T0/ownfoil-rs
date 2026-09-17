@@ -157,6 +157,7 @@ fn convert(value: Value, raw: &str) -> FieldValue<'static> {
     }
     FieldValue::owned_any(value)
 }
+#[allow(clippy::too_many_lines)] // Keep relationship hydration and authorization in one dispatch.
 async fn resolve(
     ctx: &Context,
     owner: &str,
@@ -243,24 +244,50 @@ async fn resolve(
             _ => Value::Null,
         });
     }
+    // Upstream hydrates relationships only along supported paths, avoiding cycles.
+    if (parent["_shallow"] == true
+        && matches!(
+            (owner, field),
+            ("Title", "apps" | "availableVersions" | "availableDlc")
+                | ("App", "files" | "title" | "titledb" | "versions")
+                | ("Task", "children")
+        ))
+        || (parent["_filesUnavailable"] == true && owner == "App" && field == "files")
+        || (parent["_parentUnavailable"] == true && owner == "App" && field == "title")
+        || (parent["_backlink"] == true && owner == "File" && field == "library")
+    {
+        return Ok(Value::Null);
+    }
     match (owner,field) {
-        ("Title","apps")=>Ok(select(data.apps.iter().filter(|a|a["titleId"]==parent["titleId"]).cloned().collect(),args,"App",data,false)),
+        ("Title","apps")=>{
+            let selected = select(data.apps.iter().filter(|a|a["titleId"]==parent["titleId"]).cloned().collect(),args,"App",data,false);
+            let mut rows = selected.as_array().cloned().unwrap_or_default();
+            rows.sort_by(|a,b| a["appId"].as_str().cmp(&b["appId"].as_str()).then_with(|| a["appVersion"].as_u64().cmp(&b["appVersion"].as_u64())));
+            Ok(json!(rows.into_iter().map(|row| mark(row,"_parentUnavailable")).collect::<Vec<_>>()))
+        },
         ("Title","availableVersions")=>Ok(json!(ctx.state.titledb.versions(parent["titleId"].as_str().unwrap_or_default()).await.map(|v|v.versions.into_iter().map(|version|json!({"version":version,"releaseDate":v.release_dates.get(&version)})).collect::<Vec<_>>()).unwrap_or_default())),
         ("Title","availableDlc")=>Ok(json!(ctx.state.titledb.dlc_for_title(parent["titleId"].as_str().unwrap_or_default()).await.into_iter().map(|v|json!({"appId":v.title_id,"version":v.version})).collect::<Vec<_>>())),
         ("Title","ncaKey")=>Ok(parent["key"].clone()),
-        ("TitledbDlc" | "App", "titledb")=>Ok(data.title(&parent["appId"])),
-        ("App","title")=>Ok(data.title(&parent["titleId"])),
+        ("TitledbDlc" | "App", "titledb")=>Ok(mark(data.title(&parent["appId"]), "_shallow")),
+        ("App","title")=>Ok(mark(data.title(&parent["titleId"]), "_shallow")),
         ("App","versions")=>{
             let id=if parent["appType"]=="BASE" {format!("{}800",parent["titleId"].as_str().unwrap_or_default().get(..13).unwrap_or_default())}else{parent["appId"].as_str().unwrap_or_default().into()};
             let mut rows=data.apps.iter().filter(|a|a["appId"]==id).map(|a|json!({"version":a["appVersion"],"owned":a["owned"],"releaseDate":a["releaseDate"]})).collect::<Vec<_>>();rows.sort_by_key(|v|v["version"].as_u64());Ok(json!(rows))
         }
-        ("App","files")=>if data.can_admin {Ok(select(data.files.iter().filter(|f|parent["_fileIds"].as_array().is_some_and(|ids|ids.contains(&f["id"]))).cloned().collect(),args,"File",data,false))}else{Ok(Value::Null)},
-        ("File","apps")=>Ok(select(data.apps.iter().filter(|a|a["_fileIds"].as_array().is_some_and(|ids|ids.contains(&parent["id"]))).cloned().collect(),args,"App",data,false)),
+        ("App","files")=>if data.can_admin {Ok(select(data.files.iter().filter(|f|parent["_fileIds"].as_array().is_some_and(|ids|ids.contains(&f["id"]))).cloned().map(|row| mark(row,"_backlink")).collect(),args,"File",data,false))}else{Ok(Value::Null)},
+        ("File","apps")=>Ok(select(data.apps.iter().filter(|a|a["_fileIds"].as_array().is_some_and(|ids|ids.contains(&parent["id"]))).cloned().map(|row| { let row = mark(row,"_filesUnavailable"); if parent["_backlink"] == true { mark(row,"_shallow") } else { row } }).collect(),args,"App",data,false)),
         ("File","library")=>Ok(data.libraries.iter().find(|l|l["id"].as_str().and_then(|s|s.parse::<i64>().ok())==parent["libraryId"].as_i64()).cloned().unwrap_or(Value::Null)),
-        ("Task","children")=>Ok(json!(data.tasks.iter().filter(|t|t["parentId"]==parent["id"]).collect::<Vec<_>>())),
+        ("Task","children")=>Ok(json!(data.tasks.iter().filter(|t|t["parentId"]==parent["id"]).cloned().map(|row| mark(row,"_shallow")).collect::<Vec<_>>())),
         _=>Ok(parent[field].clone()),
     }
 }
+fn mark(mut value: Value, flag: &str) -> Value {
+    if let Some(object) = value.as_object_mut() {
+        object.insert(flag.into(), Value::Bool(true));
+    }
+    value
+}
+
 #[allow(clippy::too_many_lines)] // Dispatch the public mutation contract with shared authorization.
 async fn mutate(ctx: &Context, field: &str, args: &Value) -> anyhow::Result<Value> {
     ensure!(ctx.data.can_admin, "Admin access is required for this operation.");

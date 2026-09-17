@@ -156,20 +156,25 @@ fn probe_key(decoded: &[u8], keys: &Keyset, titles: &TitleKeys) -> anyhow::Resul
     Ok(block.into())
 }
 
-fn decryption_probes(
-    file: &File,
-    entry: &Entry,
-    decoded: &[u8],
-    keys: &Keyset,
-    titles: &TitleKeys,
-) -> anyhow::Result<()> {
+struct Probe {
+    offset: u64,
+    section_end: u64,
+    expected: Option<[u8; 32]>,
+    counter: Option<[u8; 16]>,
+    bytes: Vec<u8>,
+}
+
+// At most four 64 KiB windows, independent of reconstructed NCA size.
+fn probe_layout(decoded: &[u8], content_size: u64) -> anyhow::Result<Vec<Probe>> {
+    ensure!(decoded.len() >= 0xC00, "Truncated NCA header");
+    let mut probes = Vec::new();
     for index in 0..4 {
         let start = u64::from(archive::u32_at(decoded, 0x240 + index * 16)?) * 0x200;
         let end = u64::from(archive::u32_at(decoded, 0x244 + index * 16)?) * 0x200;
         if start == 0 && end == 0 {
             continue;
         }
-        ensure!(start >= 0xC00 && start < end && end <= entry.size, "Invalid NCA section bounds");
+        ensure!(start >= 0xC00 && start < end && end <= content_size, "Invalid NCA section bounds");
         let fs = &decoded[0x400 + index * 0x200..0x600 + index * 0x200];
         if !matches!(fs[4], 1 | 3) || fs[0x148..0x1a0].iter().any(|byte| *byte != 0) {
             continue;
@@ -188,7 +193,7 @@ fn decryption_probes(
                 if length > 64 * 1024 || archive::u32_at(fs, 0x10)? != 32 {
                     continue;
                 }
-                (archive::u64_at(fs, 0x18)?, length, Some(&fs[0xc8..0xe8]))
+                (archive::u64_at(fs, 0x18)?, length, Some(archive::number::<32>(fs, 0xc8)?))
             }
             _ => continue,
         };
@@ -197,30 +202,137 @@ fn decryption_probes(
             "Decryption probe exceeds section bounds"
         );
         let offset = start + offset;
-        let probe_entry = Entry {
-            name: String::new(),
-            offset: entry.offset.checked_add(offset).context("Probe offset overflow")?,
-            size: length,
-        };
-        let mut bytes = vec![0; usize::try_from(length)?];
-        archive::reader(file, &probe_entry)?.read_exact(&mut bytes)?;
-        if fs[4] == 3 {
-            let key = probe_key(decoded, keys, titles)?;
+        let counter = if fs[4] == 3 {
             let mut counter = [0; 16];
             counter[..8].copy_from_slice(&archive::u64_at(fs, 0x140)?.to_be_bytes());
-            ncz::crypt_ctr(&mut bytes, offset, &key, counter);
-        }
-        if let Some(hash) = expected {
-            ensure!(Sha256::digest(&bytes).as_slice() == hash, "IVFC decryption probe failed");
+            Some(counter)
         } else {
-            ensure!(&bytes[..4] == b"PFS0", "PFS0 decryption probe failed");
+            None
+        };
+        probes.push(Probe {
+            offset,
+            section_end: end,
+            expected,
+            counter,
+            bytes: vec![0; usize::try_from(length)?],
+        });
+    }
+    Ok(probes)
+}
+
+fn check_probes(
+    probes: Vec<Probe>,
+    decoded: &[u8],
+    keys: &Keyset,
+    titles: &TitleKeys,
+) -> anyhow::Result<()> {
+    for mut probe in probes {
+        if let Some(counter) = probe.counter {
+            let key = probe_key(decoded, keys, titles)?;
+            ncz::crypt_ctr(&mut probe.bytes, probe.offset, &key, counter);
+        }
+        if let Some(hash) = probe.expected {
+            ensure!(
+                Sha256::digest(&probe.bytes).as_slice() == hash,
+                "IVFC decryption probe failed"
+            );
+        } else {
+            ensure!(&probe.bytes[..4] == b"PFS0", "PFS0 decryption probe failed");
             let table_size = 16
-                + u64::from(archive::u32_at(&bytes, 4)?) * 24
-                + u64::from(archive::u32_at(&bytes, 8)?);
-            ensure!(table_size <= end - offset, "PFS0 table exceeds section bounds");
+                + u64::from(archive::u32_at(&probe.bytes, 4)?) * 24
+                + u64::from(archive::u32_at(&probe.bytes, 8)?);
+            ensure!(
+                table_size <= probe.section_end - probe.offset,
+                "PFS0 table exceeds section bounds"
+            );
         }
     }
     Ok(())
+}
+
+fn decryption_probes(
+    file: &File,
+    entry: &Entry,
+    decoded: &[u8],
+    keys: &Keyset,
+    titles: &TitleKeys,
+) -> anyhow::Result<()> {
+    let mut probes = probe_layout(decoded, entry.size)?;
+    for probe in &mut probes {
+        let region = Entry {
+            name: String::new(),
+            offset: entry.offset.checked_add(probe.offset).context("Probe offset overflow")?,
+            size: probe.bytes.len() as u64,
+        };
+        archive::reader(file, &region)?.read_exact(&mut probe.bytes)?;
+    }
+    check_probes(probes, decoded, keys, titles)
+}
+
+struct ProbeWriter<'a> {
+    position: u64,
+    limit: u64,
+    hash: Sha256,
+    probes: Vec<Probe>,
+    progress: &'a mut dyn FnMut(u64) -> std::io::Result<()>,
+}
+impl Write for ProbeWriter<'_> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        (self.progress)(bytes.len() as u64)?;
+        let end = self
+            .position
+            .checked_add(bytes.len() as u64)
+            .ok_or_else(|| std::io::Error::other("Reconstructed NCA size overflow"))?;
+        if end > self.limit {
+            return Err(std::io::Error::other("Reconstructed NCA exceeds declared size"));
+        }
+        for probe in &mut self.probes {
+            let from = self.position.max(probe.offset);
+            let to = end.min(probe.offset + probe.bytes.len() as u64);
+            if from < to {
+                // Both intersections are bounded by their in-memory slices.
+                let destination =
+                    usize::try_from(from - probe.offset).map_err(std::io::Error::other)?;
+                let source =
+                    usize::try_from(from - self.position).map_err(std::io::Error::other)?;
+                let length = usize::try_from(to - from).map_err(std::io::Error::other)?;
+                probe.bytes[destination..destination + length]
+                    .copy_from_slice(&bytes[source..source + length]);
+            }
+        }
+        self.hash.update(bytes);
+        self.position = end;
+        Ok(bytes.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+struct CompressedChecks {
+    hash: [u8; 32],
+    probes: anyhow::Result<()>,
+}
+
+fn compressed_checks(
+    file: &File,
+    entry: &Entry,
+    decoded: &[u8],
+    keys: &Keyset,
+    titles: &TitleKeys,
+    progress: &mut dyn FnMut(u64) -> std::io::Result<()>,
+) -> anyhow::Result<CompressedChecks> {
+    let expected_size = archive::u64_at(decoded, 0x208)?;
+    let (probes, layout_error) = match probe_layout(decoded, expected_size) {
+        Ok(probes) => (probes, None),
+        Err(error) => (Vec::new(), Some(error)),
+    };
+    let mut out =
+        ProbeWriter { position: 0, limit: expected_size, hash: Sha256::new(), probes, progress };
+    let size = ncz::decompress(file, entry, &mut out)?;
+    ensure!(size == expected_size, "Reconstructed NCA size mismatch");
+    let probes = layout_error.map_or_else(|| check_probes(out.probes, decoded, keys, titles), Err);
+    Ok(CompressedChecks { hash: out.hash.finalize().into(), probes })
 }
 
 fn declared_modification(
@@ -328,13 +440,21 @@ pub fn verify_with_progress(
             signature = false;
             errors.push(format!("{}: Missing title ticket", entry.name));
         }
-        if !entry.name.ends_with(".ncz") {
-            if let Err(error) = decryption_probes(&file, entry, &decoded, keys, &title_keys) {
-                signature = false;
-                errors.push(format!("{}: {error}", entry.name));
-            }
-        }
         let expected_size = archive::u64_at(&decoded, 0x208)?;
+        let mut report = |bytes| {
+            done = done.saturating_add(bytes);
+            progress(done.saturating_mul(100).checked_div(total).unwrap_or(99).min(99))
+        };
+        let (compressed_hash, probe_result) = if entry.name.ends_with(".ncz") {
+            let checks = compressed_checks(&file, entry, &decoded, keys, &title_keys, &mut report)?;
+            (Some(checks.hash), checks.probes)
+        } else {
+            (None, decryption_probes(&file, entry, &decoded, keys, &title_keys))
+        };
+        if let Err(error) = probe_result {
+            signature = false;
+            errors.push(format!("{}: {error}", entry.name));
+        }
         if !entry.name.ends_with(".ncz") && entry.size != expected_size {
             signature = false;
             corrupt = true;
@@ -345,10 +465,10 @@ pub fn verify_with_progress(
                 corrupt = true;
                 errors.push(format!("{}: invalid filesystem header", entry.name));
             }
-            let actual = member_hash_progress(&file, entry, &mut |bytes| {
-                done = done.saturating_add(bytes);
-                progress(done.saturating_mul(100).checked_div(total).unwrap_or(99).min(99))
-            })?;
+            let actual = match compressed_hash {
+                Some(hash) => hash,
+                None => member_hash_progress(&file, entry, &mut report)?,
+            };
             let digest = hex::encode(actual);
             let identity = entry.name.split('.').next().unwrap_or_default().to_ascii_lowercase();
             if identity.len() != 32 || !digest.starts_with(&identity) {
@@ -468,9 +588,11 @@ mod tests {
     #[test]
     fn probes_plain_ctr_and_ivfc_with_bounds_and_wrong_keys() -> anyhow::Result<()> {
         use aes::cipher::{BlockEncrypt, KeyInit};
-        let mut keys = Keyset::default();
+        let mut keys = Keyset { header_key_cache: Some([0x17; 32]), ..Default::default() };
         keys.raw_keys.insert("key_area_key_application_00".into(), vec![0x11; 16]);
         let mut decoded = vec![0; 0xC00];
+        decoded[0x200..0x204].copy_from_slice(b"NCA3");
+        decoded[0x208..0x210].copy_from_slice(&0x4400u64.to_le_bytes());
         decoded[0x240..0x244].copy_from_slice(&0x20u32.to_le_bytes());
         decoded[0x244..0x248].copy_from_slice(&0x22u32.to_le_bytes());
         let mut encrypted_key: aes::Block = [0x22; 16].into();
@@ -509,8 +631,13 @@ mod tests {
                 let mut bytes = vec![0; usize::try_from(entry.offset + entry.size)?];
                 let start = usize::try_from(entry.offset + 0x4200)?;
                 bytes[start..start + plain.len()].copy_from_slice(&plain);
+                let header_start = usize::try_from(entry.offset)?;
+                bytes[header_start..header_start + decoded.len()].copy_from_slice(
+                    &nx_archive::formats::nca::encrypt_with_header_key(&decoded, &keys, 0x200, 0),
+                );
                 file.write_all(&bytes)?;
                 decryption_probes(&file, &entry, &decoded, &keys, &titles)?;
+                assert_compressed_probes(&file, &entry, &decoded, &keys, ctr)?;
                 if ctr {
                     assert!(
                         decryption_probes(&file, &entry, &decoded, &Keyset::default(), &titles)
@@ -529,6 +656,95 @@ mod tests {
                 assert!(decryption_probes(&file, &entry, &bad, &keys, &titles).is_err());
             }
         }
+        Ok(())
+    }
+
+    fn assert_compressed_probes(
+        file: &File,
+        entry: &Entry,
+        decoded: &[u8],
+        keys: &Keyset,
+        encrypted: bool,
+    ) -> anyhow::Result<()> {
+        use crate::settings::CompressionSettings;
+        let titles = TitleKeys::new();
+        for block in [false, true] {
+            let mut compressed = tempfile::tempfile()?;
+            ncz::compress(
+                file,
+                entry,
+                &mut compressed,
+                keys,
+                &titles,
+                &CompressionSettings { level: 1, block_size_exponent: 14, ..Default::default() },
+                block,
+            )?;
+            let ncz_entry =
+                Entry { name: "probe.ncz".into(), offset: 0, size: compressed.metadata()?.len() };
+            let mut reported = 0;
+            let checks =
+                compressed_checks(&compressed, &ncz_entry, decoded, keys, &titles, &mut |count| {
+                    reported += count;
+                    Ok(())
+                })?;
+            checks.probes?;
+            assert_eq!(reported, entry.size);
+            assert_eq!(checks.hash, member_hash(file, entry)?);
+            let mut wrong = keys.clone();
+            wrong.raw_keys.insert("key_area_key_application_00".into(), vec![0x33; 16]);
+            let checks =
+                compressed_checks(&compressed, &ncz_entry, decoded, &wrong, &titles, &mut |_| {
+                    Ok(())
+                })?;
+            assert_eq!(checks.probes.is_err(), encrypted);
+            assert!(
+                compressed_checks(&compressed, &ncz_entry, decoded, keys, &titles, &mut |_| Err(
+                    std::io::Error::other("Task cancelled")
+                ))
+                .is_err()
+            );
+            let mut wrong_size = decoded.to_vec();
+            wrong_size[0x208..0x210].copy_from_slice(&(entry.size + 1).to_le_bytes());
+            assert!(
+                compressed_checks(
+                    &compressed,
+                    &ncz_entry,
+                    &wrong_size,
+                    keys,
+                    &titles,
+                    &mut |_| Ok(())
+                )
+                .is_err()
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn probe_capture_handles_split_writes_with_bounded_buffers() -> anyhow::Result<()> {
+        let mut progress = |_| Ok(());
+        let mut sink = ProbeWriter {
+            position: 0,
+            limit: 100,
+            hash: Sha256::new(),
+            progress: &mut progress,
+            probes: vec![Probe {
+                offset: 11,
+                section_end: 100,
+                expected: None,
+                counter: None,
+                bytes: vec![0; 16],
+            }],
+        };
+        let bytes = (0..100u8).collect::<Vec<_>>();
+        for chunk in bytes.chunks(7) {
+            sink.write_all(chunk)?;
+        }
+        assert_eq!(sink.probes[0].bytes, bytes[11..27]);
+        assert_eq!(sink.probes[0].bytes.capacity(), 16);
+        assert!(sink.write_all(&[0]).is_err());
+        assert_eq!(sink.position, 100);
+        assert_eq!(sink.hash.finalize(), Sha256::digest(&bytes));
         Ok(())
     }
 

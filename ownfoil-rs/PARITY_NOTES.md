@@ -50,19 +50,22 @@ These are tracked limitations, not completed parity claims:
 - Solid compression currently uses one encoder thread. Block compression honors
   the requested thread count, bounded by CPU availability and a 128 MiB batch
   budget. Compression ratios and throughput differ from upstream libzstd.
-- Extended/unsupported NCA encryption sections are preserved as encrypted raw
-  sections. They round-trip but compress less effectively.
+- Conventional extended-CTR (BKTR) sections now compress using validated counter
+  buckets. Unsupported sparse/skip-layer-hash layouts remain encrypted raw
+  sections; real extended-CTR content still needs external validation.
 - Verification checks RSA-PSS signatures, filesystem headers, PFS0/IVFC
   decryption probes, CNMT hashes, and reconstructed content hashes. Hash jobs
   publish progress and support cooperative cancellation. Extended encryption
   layouts and modified/repack classification still need a broader golden fixture
-  matrix; compressed members are not subjected to the same decryption probes.
+  matrix. Compressed members now use the same bounded decryption probes, sharing
+  one reconstruction pass with hash verification.
 - Task orchestration now uses parent/child jobs and scoped maintenance rather than
   rescanning for every job. Failed children fail their parent, and successful
   history is bounded; upstream deletes settled task trees. These are intentional
   diagnostic differences.
-- Full GraphQL role/filter/relationship compatibility still needs the upstream
-  client test matrix. Missing app records persist with stable database IDs.
+- A pinned upstream fixture now covers 126 exact GraphQL responses across three
+  roles, filters, sorting, statistics, and nested relationships. The full client
+  matrix remains open. Missing app records persist with stable database IDs.
 - Recovery tests cover interrupted publication, damaged-output rejection, and
   stable IDs through canonical path aliases. Real NSP and NSZ conversions pass
   in temporary copies; XCI/XCZ coverage remains synthetic.

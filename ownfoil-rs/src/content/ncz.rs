@@ -1,4 +1,6 @@
 //! Native NCZ section transform, solid Zstandard and independently compressed blocks.
+#[path = "bktr.rs"]
+mod bktr;
 use super::archive::{Entry, number, reader, u32_at, u64_at};
 use crate::settings::CompressionSettings;
 use aes::cipher::{BlockEncrypt, KeyInit};
@@ -76,18 +78,26 @@ fn sections(
                 counter: [0; 16],
             });
         }
-        // Extended CTR has per-subsection counters. Preserve those encrypted bytes verbatim.
-        // This remains a valid NCZ and avoids changing unsupported crypto layouts.
-        let crypto = if header.encryption_type as u8 == 3 && key.is_some() { 3 } else { 1 };
+        let encryption = header.encryption_type as u8;
+        let crypto = if matches!(encryption, 3 | 4) && key.is_some() { 3 } else { 1 };
         let mut counter = [0; 16];
         counter[..8].copy_from_slice(&header.ctr.to_be_bytes());
-        result.push(Section {
+        let section = Section {
             offset: start,
             size: end - start,
             crypto,
             key: key.unwrap_or([0; 16]),
             counter,
-        });
+        };
+        if encryption == 4 && key.is_some() {
+            ensure!(
+                u64::from(fs.start_offset) * 0x200 == start,
+                "Extended CTR overlaps NCA header"
+            );
+            result.extend(bktr::sections(file, entry, &section, &header.patch_info)?);
+        } else {
+            result.push(section);
+        }
         cursor = end;
     }
     if cursor < entry.size {
@@ -99,7 +109,7 @@ fn sections(
             counter: [0; 16],
         });
     }
-    ensure!(!result.is_empty(), "NCA has no data sections");
+    ensure!(!result.is_empty() && result.len() <= 100_000, "Invalid NCA section count");
     Ok(result)
 }
 
@@ -471,6 +481,129 @@ mod tests {
         file.write_all(&bytes)?;
         Ok((file, Entry { name: "test.nca".into(), offset: 0, size: size as u64 }, keys, bytes))
     }
+    fn extended_fixture(
+        mutate: impl FnOnce(&mut [u8], &mut [u8]),
+    ) -> anyhow::Result<(tempfile::NamedTempFile, Entry, Keyset, Vec<u8>)> {
+        let (mut file, entry, keys, mut bytes) = fixture(false)?;
+        let mut header =
+            nx_archive::formats::nca::decrypt_with_header_key(&bytes[..0xC00], &keys, 0x200, 0)
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        header[0x404] = 4;
+        let patch = &mut header[0x500..0x540];
+        patch[0x20..0x28].copy_from_slice(&0x10000u64.to_le_bytes());
+        patch[0x28..0x30].copy_from_slice(&0x8000u64.to_le_bytes());
+        patch[0x30..0x34].copy_from_slice(b"BKTR");
+        patch[0x34..0x38].copy_from_slice(&1u32.to_le_bytes());
+        patch[0x38..0x3c].copy_from_slice(&2u32.to_le_bytes());
+        let table = &mut bytes[0x14000..0x20000];
+        table.fill(0);
+        table[4..8].copy_from_slice(&1u32.to_le_bytes());
+        table[8..16].copy_from_slice(&0x10000u64.to_le_bytes());
+        table[0x4004..0x4008].copy_from_slice(&2u32.to_le_bytes());
+        table[0x4008..0x4010].copy_from_slice(&0x10000u64.to_le_bytes());
+        table[0x401c..0x4020].copy_from_slice(&9u32.to_le_bytes());
+        table[0x4020..0x4028].copy_from_slice(&0x8000u64.to_le_bytes());
+        table[0x402c..0x4030].copy_from_slice(&11u32.to_le_bytes());
+        mutate(patch, table);
+        for (start, end, generation) in
+            [(0x4000, 0xc000, 9u64), (0xc000, 0x14000, 11), (0x14000, 0x24000, 7)]
+        {
+            let mut counter = [0; 16];
+            counter[..8].copy_from_slice(&generation.to_be_bytes());
+            crypt_ctr(&mut bytes[start..end], start as u64, &[0x22; 16], counter);
+        }
+        bytes[..0xC00].copy_from_slice(&nx_archive::formats::nca::encrypt_with_header_key(
+            &header, &keys, 0x200, 0,
+        ));
+        file.rewind()?;
+        file.write_all(&bytes)?;
+        Ok((file, entry, keys, bytes))
+    }
+
+    #[test]
+    fn extended_ctr_subsections_roundtrip_in_solid_and_block_ncz() -> anyhow::Result<()> {
+        let (file, entry, keys, expected) = extended_fixture(|_, _| {})?;
+        let titles = TitleKeys::new();
+        let layout = sections(file.as_file(), &entry, &keys, &titles)?;
+        assert_eq!(layout.len(), 3);
+        assert_eq!(layout.iter().map(|s| s.crypto).collect::<Vec<_>>(), vec![4, 4, 3]);
+        for (section, generation) in layout.iter().zip([9u32, 11, 7]) {
+            assert_eq!(section.counter[4..8], generation.to_be_bytes());
+        }
+        for block in [false, true] {
+            let mut compressed = tempfile::tempfile()?;
+            compress(
+                file.as_file(),
+                &entry,
+                &mut compressed,
+                &keys,
+                &titles,
+                &CompressionSettings { level: 1, block_size_exponent: 14, ..Default::default() },
+                block,
+            )?;
+            let encoded =
+                Entry { name: "test.ncz".into(), offset: 0, size: compressed.metadata()?.len() };
+            let mut restored = Vec::new();
+            decompress(&compressed, &encoded, &mut restored)?;
+            assert_eq!(restored, expected);
+            assert!(
+                encoded.size < entry.size / 2,
+                "extended encryption should expose compressible plaintext"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn extended_ctr_handles_multiple_buckets_and_metadata_tail() -> anyhow::Result<()> {
+        for multiple in [false, true] {
+            let (file, entry, keys, _) = extended_fixture(|patch, table| {
+                if multiple {
+                    patch[0x28..0x30].copy_from_slice(&0xc000u64.to_le_bytes());
+                    table[4..8].copy_from_slice(&2u32.to_le_bytes());
+                    table[24..32].copy_from_slice(&0x8000u64.to_le_bytes());
+                    table[0x4004..0x4008].copy_from_slice(&1u32.to_le_bytes());
+                    table[0x4008..0x4010].copy_from_slice(&0x8000u64.to_le_bytes());
+                    table[0x8004..0x8008].copy_from_slice(&1u32.to_le_bytes());
+                    table[0x8008..0x8010].copy_from_slice(&0x10000u64.to_le_bytes());
+                    table[0x8010..0x8018].copy_from_slice(&0x8000u64.to_le_bytes());
+                    table[0x801c..0x8020].copy_from_slice(&11u32.to_le_bytes());
+                } else {
+                    // The normal-counter metadata tail can start before the counter table.
+                    table[0x4008..0x4010].copy_from_slice(&0xc000u64.to_le_bytes());
+                }
+            })?;
+            let layout = sections(file.as_file(), &entry, &keys, &TitleKeys::new())?;
+            assert_eq!(layout.len(), 3);
+            assert_eq!(layout.iter().map(|section| section.size).sum::<u64>(), entry.size - HEADER);
+            for adjacent in layout.windows(2) {
+                assert_eq!(adjacent[0].offset + adjacent[0].size, adjacent[1].offset);
+            }
+            assert_eq!(layout[2].offset, if multiple { 0x14000 } else { 0x10000 });
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn extended_ctr_rejects_malformed_bucket_tables() -> anyhow::Result<()> {
+        for mutation in 0..7 {
+            let (file, entry, keys, _) = extended_fixture(|patch, table| match mutation {
+                0 => patch[0x30..0x34].copy_from_slice(b"FAIL"),
+                1 => patch[0x28..0x30].copy_from_slice(&u64::MAX.to_le_bytes()),
+                2 => table[4..8].copy_from_slice(&u32::MAX.to_le_bytes()),
+                3 => table[0x4004..0x4008].copy_from_slice(&u32::MAX.to_le_bytes()),
+                4 => table[0x4020..0x4028].copy_from_slice(&0u64.to_le_bytes()),
+                5 => table[8..16].copy_from_slice(&0x18000u64.to_le_bytes()),
+                _ => patch[0x38..0x3c].copy_from_slice(&3u32.to_le_bytes()),
+            })?;
+            assert!(
+                sections(file.as_file(), &entry, &keys, &TitleKeys::new()).is_err(),
+                "mutation {mutation}"
+            );
+        }
+        Ok(())
+    }
+
     /// Optional independent oracle; the application never invokes this executable.
     #[test]
     #[ignore = "requires the reference zstd CLI for interoperability validation"]

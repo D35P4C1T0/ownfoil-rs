@@ -163,3 +163,9 @@ upstream task and GraphQL implementations. This follow-up adds:
 - [x] ARM deployment instructions in [docs/ARM.md](docs/ARM.md).
 
 The external validation gates and codec differences in the parity notes remain.
+
+- [x] Bounded NCZ decryption probes sharing the reconstructed hash pass.
+- [x] Conventional BKTR extended-CTR compression with malformed-table and
+  solid/block round-trip coverage.
+- [x] 126 pinned-upstream GraphQL response comparisons, including relationship
+  hydration depth and nested ordering.
