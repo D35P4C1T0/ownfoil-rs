@@ -166,19 +166,86 @@ fn reset_for_rerun(conn: &rusqlite::Connection, id: i64) -> rusqlite::Result<()>
     Ok(())
 }
 
+fn display_name(name: &str, input: &Value, filename: Option<&str>) -> String {
+    let text = |key: &str| input[key].as_str();
+    let basename = |path: &str| path.rsplit('/').next().unwrap_or(path).to_string();
+    let file_label = || {
+        // Explicit paths take precedence, including null for files already removed.
+        let path = if input.get("filepath").is_some() { text("filepath") } else { filename };
+        path.filter(|path| !path.is_empty()).map_or_else(
+            || {
+                format!(
+                    "file #{}",
+                    input.get("file_id").filter(|id| !id.is_null()).map_or_else(
+                        || "None".into(),
+                        |id| id.as_str().map_or_else(|| id.to_string(), str::to_string)
+                    )
+                )
+            },
+            basename,
+        )
+    };
+    let label = match name {
+        "startup" => Some("Startup".into()),
+        "update_titledb" => Some("Update TitleDB".into()),
+        "scan_libraries" => Some("Scan all libraries".into()),
+        "scan_library" => text("library_path").map(|path| format!("Scan {path}")),
+        "add_file" => text("filepath").map(|path| format!("Add {}", basename(path))),
+        "process_file" => Some(format!("Process {}", file_label())),
+        "process_library" => Some("Process library files".into()),
+        "library_maintenance" => Some(
+            text("library_path")
+                .filter(|path| !path.is_empty())
+                .map_or_else(|| "Library maintenance".into(), |path| format!("Maintain {path}")),
+        ),
+        "add_missing_apps_for_title" => {
+            text("title_id").map(|id| format!("Add missing content for {id}"))
+        }
+        "update_titles_for_title" => text("title_id").map(|id| format!("Update title {id}")),
+        "remove_outdated_updates" => Some("Remove outdated updates".into()),
+        "verify_file" => Some(format!("Verify {}", file_label())),
+        "compress_file" => Some(format!("Compress {}", file_label())),
+        "decompress_file" => Some(format!("Decompress {}", file_label())),
+        "add_missing_apps" => Some("Add missing content".into()),
+        "remove_missing_files" => Some("Remove missing files".into()),
+        "update_titles" => Some("Update titles".into()),
+        "remove_library" => text("library_path").map(|path| format!("Remove library {path}")),
+        "handle_file_added" => text("filepath").map(|path| format!("New file {}", basename(path))),
+        "handle_file_moved" => text("src_path")
+            .zip(text("dest_path"))
+            .map(|(source, target)| format!("Moved {} to {}", basename(source), basename(target))),
+        "handle_file_deleted" => text("filepath").map(|path| format!("Deleted {}", basename(path))),
+        "handle_dir_deleted" => {
+            text("dirpath").map(|path| format!("Deleted folder {}", basename(path)))
+        }
+        _ => None,
+    };
+    label.unwrap_or_else(|| {
+        let humanized = name.replace('_', " ").to_lowercase();
+        let mut chars = humanized.chars();
+        chars.next().map_or_else(String::new, |first| {
+            first.to_uppercase().collect::<String>() + chars.as_str()
+        })
+    })
+}
+
 pub async fn list(storage: &Storage) -> anyhow::Result<Vec<Value>> {
     Ok(storage.with_connection(|conn| {
-        let mut stmt = conn.prepare("SELECT id,task_name,status,completion_pct,exit_code,error_message,created_at,started_at,completed_at,run_after,parent_id,worker_id,input_json,output_json FROM tasks ORDER BY id DESC")?;
+        let mut stmt = conn.prepare("SELECT tasks.id,task_name,status,completion_pct,exit_code,error_message,created_at,started_at,completed_at,run_after,parent_id,worker_id,input_json,output_json,files.name FROM tasks LEFT JOIN files ON files.id=json_extract(CASE WHEN json_valid(input_json) THEN input_json ELSE '{}' END,'$.file_id') ORDER BY tasks.id DESC")?;
         let rows = stmt.query_map([], |r| {
             let name: String = r.get(1)?;
             let id: i64 = r.get(0)?;
-            Ok(json!({"id": id.to_string(), "taskName":name, "displayName":name.replace('_'," "),
+            let input: Option<String> = r.get(12)?;
+            let parsed: Value = input.as_deref().and_then(|input| serde_json::from_str(input).ok()).unwrap_or(Value::Null);
+            let filename: Option<String> = r.get(14)?;
+            let display = display_name(&name, &parsed, filename.as_deref());
+            Ok(json!({"id": id.to_string(), "taskName":name, "displayName":display,
                 "status":r.get::<_,String>(2)?.to_ascii_uppercase(), "completionPct":r.get::<_,i64>(3)?,
                 "exitCode":r.get::<_,Option<i64>>(4)?, "errorMessage":r.get::<_,Option<String>>(5)?,
                 "createdAt":r.get::<_,Option<String>>(6)?, "startedAt":r.get::<_,Option<String>>(7)?,
                 "completedAt":r.get::<_,Option<String>>(8)?, "runAfter":r.get::<_,Option<String>>(9)?,
                 "parentId":r.get::<_,Option<i64>>(10)?.map(|id|id.to_string()), "workerId":r.get::<_,Option<i64>>(11)?,
-                "input":r.get::<_,Option<String>>(12)?, "output":r.get::<_,Option<String>>(13)?}))
+                "input":input, "output":r.get::<_,Option<String>>(13)?}))
         })?;
         rows.collect::<Result<Vec<_>,_>>().map_err(Into::into)
     }).await?)
@@ -1117,6 +1184,57 @@ pub async fn schedule_titledb(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn task_labels_resolve_files_and_survive_stale_input() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let storage = Storage::open(dir.path().join("labels.db")).await?;
+        storage.with_connection(|conn| {
+            conn.execute("INSERT INTO libraries(path) VALUES('/games')", [])?;
+            conn.execute("INSERT INTO files(id,library_id,path,folder,name,ext,size) VALUES(7,1,'Demo.nsp','','Demo.nsp','nsp',1)", [])?;
+            for (name, input) in [
+                ("verify_file", r#"{"file_id":7}"#),
+                ("compress_file", r#"{"file_id":8}"#),
+                ("scan_library", "not json"),
+                ("handle_file_moved", r#"{"src_path":"/old/A.nsp","dest_path":"/new/B.nsp"}"#),
+                ("verify_file", r#"{"file_id":7,"filepath":"/override/Other.nsp"}"#),
+            ] {
+                conn.execute("INSERT INTO tasks(task_name,input_json) VALUES(?1,?2)", (name,input))?;
+            }
+            Ok(())
+        }).await?;
+        let mut tasks = list(&storage).await?;
+        tasks.reverse();
+        assert_eq!(
+            tasks
+                .iter()
+                .map(|task| task["displayName"].as_str().unwrap_or_default())
+                .collect::<Vec<_>>(),
+            [
+                "Verify Demo.nsp",
+                "Compress file #8",
+                "Scan library",
+                "Moved A.nsp to B.nsp",
+                "Verify Other.nsp"
+            ]
+        );
+        storage
+            .with_connection(|conn| {
+                conn.execute("DELETE FROM files WHERE id=7", [])?;
+                Ok(())
+            })
+            .await?;
+        assert_eq!(
+            list(&storage).await?.last().context("Missing task")?["displayName"],
+            "Verify file #7"
+        );
+        assert_eq!(display_name("update_titledb", &Value::Null, None), "Update TitleDB");
+        assert_eq!(
+            display_name("library_maintenance", &json!({"library_path":"/games"}), None),
+            "Maintain /games"
+        );
+        Ok(())
+    }
 
     async fn test_state() -> anyhow::Result<(tempfile::TempDir, AppState)> {
         use std::sync::Arc;

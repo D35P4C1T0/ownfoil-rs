@@ -280,13 +280,19 @@ async fn finalize(state: &AppState, data: &Value) -> anyhow::Result<()> {
     let filename = target.file_name().context("Invalid target name")?.to_string_lossy().to_string();
     let ext = target.extension().context("Invalid target extension")?.to_string_lossy().to_string();
     let compressed = matches!(ext.as_str(), "nsz" | "xcz");
-    let size = i64::try_from(std::fs::metadata(&target)?.len())?;
+    let metadata = std::fs::metadata(&target)?;
+    let size = i64::try_from(metadata.len())?;
+    let modified = metadata
+        .modified()
+        .ok()
+        .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|duration| duration.as_secs_f64());
     let id = data["file_id"].as_i64().context("Invalid file id")?;
     storage
         .with_connection(move |conn| {
             conn.execute(
-                "UPDATE files SET path=?2,name=?3,ext=?4,compressed=?5,size=?6 WHERE id=?1",
-                rusqlite::params![id, relative, filename, ext, compressed, size],
+                "UPDATE files SET path=?2,name=?3,ext=?4,compressed=?5,size=?6,mtime=?7 WHERE id=?1",
+                rusqlite::params![id, relative, filename, ext, compressed, size, modified],
             )?;
             Ok(())
         })

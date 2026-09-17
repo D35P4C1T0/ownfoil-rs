@@ -15,6 +15,29 @@ use axum::{
 use axum_extra::extract::CookieJar;
 use serde_json::{Value, json};
 
+const HEARTBEAT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(25);
+
+#[derive(Default)]
+struct Heartbeat {
+    awaiting_pong: bool,
+}
+
+impl Heartbeat {
+    fn next_ping(&mut self) -> Option<Message> {
+        if self.awaiting_pong {
+            return None;
+        }
+        self.awaiting_pong = true;
+        Some(Message::Ping(Vec::new().into()))
+    }
+
+    const fn receive(&mut self, message: &Message) {
+        if matches!(message, Message::Pong(payload) if payload.is_empty()) {
+            self.awaiting_pong = false;
+        }
+    }
+}
+
 async fn access(state: &AppState, headers: &HeaderMap, jar: &CookieJar) -> Result<(), ApiError> {
     ensure_access(state, headers, super::handlers::session_token(jar), Access::Admin).await
 }
@@ -53,9 +76,26 @@ pub async fn websocket(
     Ok(upgrade.on_upgrade(move |mut socket|async move {
         let mut previous=std::collections::HashMap::<String,Vec<Value>>::new();
         let mut ticker=tokio::time::interval(std::time::Duration::from_millis(250));
+        let mut heartbeat = Heartbeat::default();
+        let mut heartbeat_timer = tokio::time::interval_at(
+            tokio::time::Instant::now() + HEARTBEAT_INTERVAL,
+            HEARTBEAT_INTERVAL,
+        );
+        heartbeat_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tokio::select! {
-                message=socket.recv()=>{if !matches!(message,Some(Ok(Message::Ping(_)|Message::Pong(_)|Message::Text(_)|Message::Binary(_)))) {break;}},
+                message=socket.recv()=>{
+                    match message {
+                        Some(Ok(message @ (Message::Ping(_)|Message::Pong(_)|Message::Text(_)|Message::Binary(_)))) => heartbeat.receive(&message),
+                        _ => break,
+                    }
+                },
+                _=heartbeat_timer.tick()=>{
+                    // A peer must answer the preceding ping before the next one.
+                    let Some(ping) = heartbeat.next_ping() else { break; };
+                    let sent = tokio::time::timeout(std::time::Duration::from_secs(10), socket.send(ping)).await;
+                    if !matches!(sent, Ok(Ok(()))) { break; }
+                },
                 _=ticker.tick()=>{
                     // Revoked sessions stop receiving privileged filesystem/task data.
                     if access(&state,&headers,&jar).await.is_err() {break;}
@@ -120,6 +160,21 @@ fn topic_events(topic: &str, previous: Option<&[Value]>, current: &[Value]) -> V
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn heartbeat_requires_matching_pong_before_next_interval() {
+        let mut heartbeat = Heartbeat::default();
+        assert!(
+            matches!(heartbeat.next_ping(), Some(Message::Ping(payload)) if payload.is_empty())
+        );
+        heartbeat.receive(&Message::Text("still here".into()));
+        heartbeat.receive(&Message::Ping(Vec::new().into()));
+        heartbeat.receive(&Message::Pong(vec![1].into()));
+        assert!(heartbeat.next_ping().is_none());
+        heartbeat.receive(&Message::Pong(Vec::new().into()));
+        assert!(matches!(heartbeat.next_ping(), Some(Message::Ping(_))));
+        assert!(heartbeat.next_ping().is_none());
+    }
 
     #[test]
     fn realtime_contract_uses_numeric_ids_and_row_deltas() {

@@ -1311,6 +1311,10 @@ mod tests {
         let source = games.join("Demo.nsp");
         let target = games.join("Demo.nsz");
         std::fs::write(&source, &bytes)?;
+        std::fs::File::options()
+            .write(true)
+            .open(&source)?
+            .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(10_000))?;
         let files = crate::scan_all_libraries(
             std::slice::from_ref(&games),
             &storage,
@@ -1319,6 +1323,11 @@ mod tests {
         )
         .await?;
         let id = files[0].id;
+        let database_id = i64::try_from(id)?;
+        storage.with_connection(move |conn| {
+            conn.execute("UPDATE files SET signature_valid=1,hash_valid=1,hash_modified=0,verified_at='2026-09-17T00:00:00Z' WHERE id=?1", [database_id])?;
+            Ok(())
+        }).await?;
         *state.catalog.write().await = Catalog::from_files(files);
         let journal = state.data_dir.join(format!("conversion-{id}.json"));
         let canonical_root = std::fs::canonicalize(&games)?;
@@ -1344,7 +1353,31 @@ mod tests {
         assert_eq!(file.path, "Demo.nsz");
         assert_eq!(state.catalog.read().await.files().len(), 1);
         assert_eq!(storage.list_libraries().await?.len(), 1);
+        let read_verdict = move |conn: &mut rusqlite::Connection| {
+            Ok(conn.query_row(
+                "SELECT signature_valid,hash_valid,hash_modified,verified_at FROM files WHERE id=?1",
+                [database_id],
+                |row| Ok((row.get::<_, Option<bool>>(0)?, row.get::<_, Option<bool>>(1)?, row.get::<_, Option<bool>>(2)?, row.get::<_, Option<String>>(3)?)),
+            )?)
+        };
+        assert_eq!(
+            storage.with_connection(read_verdict).await?,
+            (Some(true), Some(true), Some(false), Some("2026-09-17T00:00:00Z".into()))
+        );
         crate::content::recover(&state).await?;
+        // A later external change must still invalidate the retained verdict.
+        std::fs::File::options()
+            .write(true)
+            .open(&target)?
+            .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(20_000))?;
+        crate::scan_all_libraries(
+            std::slice::from_ref(&games),
+            &storage,
+            &state.settings.read().await.library.management,
+            &state.keys_path,
+        )
+        .await?;
+        assert_eq!(storage.with_connection(read_verdict).await?, (None, None, None, None));
         Ok(())
     }
 
