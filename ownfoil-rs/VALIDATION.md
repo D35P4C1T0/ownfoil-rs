@@ -107,3 +107,18 @@ cargo test --locked graphql_matches_pinned_upstream_response_matrix
 The synthetic fixture derives from upstream's `tests/test_gql_graph.py` under
 AGPL-3.0. It contains no commercial content or console keys. This comparison does
 not replace hardware/client checks or the complete golden HTTP matrix.
+
+### CI and runtime follow-up
+
+- GitHub CI and Container workflows succeeded for `b97b005`. Local checks now use
+  Rust 1.98.0; Clippy's minimum version matches Cargo's Rust 1.97 requirement.
+- Default suite: 124 tests plus 8 route-contract tests passed, 3 optional tests
+  ignored. Strict Clippy, formatting, and whitespace checks passed.
+- Reference Zstandard interoperability and a real NSZ solid round-trip passed
+  separately. The archive was copied into temporary storage; originals were not
+  modified.
+- Added regressions for heartbeat acknowledgements, task labels with missing
+  files or malformed persisted arguments, and conversion recovery preserving
+  verification while later external modifications invalidate it.
+- Upstream HEAD `84f0b352332cf4ac467db16228b10779f2eb2108` differs from the pinned
+  feature baseline only in README documentation.
