@@ -12,8 +12,6 @@ use axum::{
 };
 use axum_extra::extract::CookieJar;
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
-use std::{io::Cursor, sync::LazyLock, time::Duration};
 
 pub async fn handshake(
     State(state): State<AppState>,
@@ -51,43 +49,82 @@ pub async fn services_post(
     Ok(Json(json!({"success":true,"errors":[]})))
 }
 
-fn source<'a>(title: &'a Value, kind: &str, position: usize) -> Option<&'a str> {
-    let url = match kind {
-        "icon" => title["iconUrl"].as_str(),
-        "banner" => title["bannerUrl"].as_str(),
-        "screenshot" => title["screenshots"].as_array()?.get(position)?.as_str(),
-        _ => None,
-    }?;
-    (!url.is_empty()).then_some(url)
-}
-fn source_hash(url: &str) -> String {
-    hex::encode(Sha256::digest(url.as_bytes()))
-}
 fn image(title: &Value, kind: &str, position: usize, size: &str) -> Value {
-    source(title, kind, position).map_or(Value::Null, |url| json!({
-        "url":format!("/api/media/{}/{kind}/{position}/{}/{}.jpg",title["titleId"].as_str().unwrap_or_default(),size.to_ascii_lowercase(),source_hash(url)),
-        "size":size,"local":true
-    }))
+    let source = crate::media::source(title, kind, position);
+    if title["_localMediaEnabled"] == false {
+        if let Some(url) = source.filter(|url| !url.starts_with("/api/media/")) {
+            return json!({"url":url,"size":size,"local":false,"width":null,"height":null});
+        }
+    }
+    let slot = title["_media"].as_array().and_then(|slots| {
+        slots.iter().find(|slot| {
+            slot["kind"] == kind
+                && slot["position"] == position
+                && source.is_some_and(|url| {
+                    slot["source"] == url
+                        || (url.starts_with("/api/media/")
+                            && url
+                                .rsplit('/')
+                                .next()
+                                .is_some_and(|filename| slot["filename"] == filename))
+                })
+        })
+    });
+    let filename = slot
+        .and_then(|slot| slot["filename"].as_str())
+        .map(str::to_owned)
+        .or_else(|| source.map(|url| format!("{}.jpg", crate::media::source_hash(url))));
+    let Some(filename) = filename else { return Value::Null };
+    let (width, height) = slot.map_or((0, 0), |slot| {
+        crate::media::fit(
+            u32::try_from(slot["width"].as_u64().unwrap_or(0)).unwrap_or(0),
+            u32::try_from(slot["height"].as_u64().unwrap_or(0)).unwrap_or(0),
+            kind,
+            &size.to_ascii_lowercase(),
+        )
+    });
+    let url = source.filter(|url| url.starts_with("/api/media/")).map_or_else(
+        || {
+            format!(
+                "/api/media/{}/{kind}/{position}/{}/{filename}",
+                title["titleId"].as_str().unwrap_or_default(),
+                size.to_ascii_lowercase()
+            )
+        },
+        |url| {
+            let parts: Vec<_> = url.split('/').collect();
+            if parts.len() == 8 {
+                format!(
+                    "/api/media/{}/{}/{}/{}/{}",
+                    parts[3],
+                    parts[4],
+                    parts[5],
+                    size.to_ascii_lowercase(),
+                    parts[7]
+                )
+            } else {
+                url.to_owned()
+            }
+        },
+    );
+    json!({"url":url,"size":size,"local":true,"width":if width==0 {Value::Null} else {json!(width)},"height":if height==0 {Value::Null} else {json!(height)}})
 }
 pub fn images(title: &Value, field: &str, args: &Value) -> Value {
     let size = args["size"].as_str().unwrap_or("CLIENT");
     if field == "screenshots" {
-        return title["screenshots"].as_array().map_or(Value::Null, |urls| {
-            json!(
-                (0..urls.len())
-                    .map(|i| image(title, "screenshot", i, size))
-                    .filter(|v| !v.is_null())
-                    .collect::<Vec<_>>()
-            )
-        });
+        if !title["screenshots"].is_array() {
+            return Value::Null;
+        }
+        let count = title["screenshots"].as_array().map_or(0, Vec::len);
+        return json!(
+            (0..count)
+                .map(|i| image(title, "screenshot", i, size))
+                .filter(|v| !v.is_null())
+                .collect::<Vec<_>>()
+        );
     }
     image(title, field, 0, size)
 }
-
-static CLIENT: LazyLock<reqwest::Client> = LazyLock::new(|| {
-    reqwest::Client::builder().timeout(Duration::from_secs(30)).build().unwrap_or_default()
-});
-const MAX_IMAGE_BYTES: usize = 16 * 1024 * 1024;
 
 pub async fn media(
     State(state): State<AppState>,
@@ -96,55 +133,52 @@ pub async fn media(
     Path((title, kind, position, size, hash)): Path<(String, String, usize, String, String)>,
 ) -> Result<Response, ApiError> {
     ensure_authorized(&state, &headers, super::handlers::session_token(&jar)).await?;
-    if !matches!(size.as_str(), "original" | "thumb" | "client" | "screen") {
-        return Err(ApiError::NotFound);
-    }
-    let info = state.titledb.lookup(&title).await.ok_or(ApiError::NotFound)?;
-    let mut record = Value::Object(info.record);
-    record["iconUrl"] = json!(info.icon_url);
-    record["bannerUrl"] = json!(info.banner_url);
-    if let Some(raw) = record["screenshots"].as_str() {
-        record["screenshots"] = serde_json::from_str(raw).unwrap_or(Value::Null);
-    }
-    let url = source(&record, &kind, position).ok_or(ApiError::NotFound)?.to_string();
-    if hash != format!("{}.jpg", source_hash(&url))
-        || !(url.starts_with("https://") || url.starts_with("http://"))
+    if !crate::media::SIZES.contains(&size.as_str())
+        || !crate::media::KINDS.contains(&kind.as_str())
+        || hash.len() != 68
+        || hash.strip_suffix(".jpg").is_none()
+        || !hash.as_bytes().iter().take(64).all(u8::is_ascii_hexdigit)
     {
         return Err(ApiError::NotFound);
     }
-    let directory = state.data_dir.join("media").join(&kind).join(&size);
-    let path = directory.join(&hash);
+    let path = state.data_dir.join("media").join(&kind).join(&size).join(&hash);
     let etag = format!("\"{hash}\"");
-    if path.is_file() && headers.get("if-none-match").and_then(|v| v.to_str().ok()) == Some(&etag) {
+    if !path.is_file() {
+        let info = state.titledb.lookup(&title).await.ok_or(ApiError::NotFound)?;
+        let mut record = Value::Object(info.record);
+        record["iconUrl"] = json!(info.icon_url);
+        record["bannerUrl"] = json!(info.banner_url);
+        if let Some(raw) = record["screenshots"].as_str() {
+            record["screenshots"] = serde_json::from_str(raw).unwrap_or(Value::Null);
+        }
+        let url = crate::media::source(&record, &kind, position).ok_or(ApiError::NotFound)?;
+        if hash != format!("{}.jpg", crate::media::source_hash(url)) {
+            return Err(ApiError::NotFound);
+        }
+        crate::media::download(&state, &title, &kind, position, url)
+            .await
+            .map_err(|_| ApiError::NotFound)?;
+    }
+    if headers.get("if-none-match").and_then(|v| v.to_str().ok()) == Some(&etag) {
         return Ok((
             StatusCode::NOT_MODIFIED,
-            [("etag", etag), ("cache-control", "private, max-age=31536000, immutable".into())],
+            [
+                ("etag", etag),
+                ("cache-control", "private, max-age=31536000, immutable".into()),
+                ("vary", "Authorization, Cookie".into()),
+            ],
         )
             .into_response());
     }
-    let bytes = if let Ok(bytes) = tokio::fs::read(&path).await {
-        bytes
-    } else {
-        let original_dir = state.data_dir.join("media").join("source");
-        let original_path = original_dir.join(&hash);
-        let bytes = if let Ok(bytes) = tokio::fs::read(&original_path).await {
-            bytes
-        } else {
-            let bytes = fetch_image(&url).await?;
-            save_cache(&original_dir, &original_path, &bytes).await?;
-            bytes
-        };
-        let icon = kind == "icon";
-        let bytes = tokio::task::spawn_blocking(move || render(&bytes, icon, &size))
-            .await
-            .map_err(|_| ApiError::Internal)?
-            .map_err(|_| ApiError::NotFound)?;
-        save_cache(&directory, &path, &bytes).await?;
-        bytes
+    let bytes = tokio::fs::read(path).await.map_err(|_| ApiError::NotFound)?;
+    let content_type = match image::guess_format(&bytes) {
+        Ok(image::ImageFormat::Png) => "image/png",
+        Ok(image::ImageFormat::WebP) => "image/webp",
+        _ => "image/jpeg",
     };
     Ok((
         [
-            ("content-type", "image/jpeg".to_string()),
+            ("content-type", content_type.to_string()),
             ("etag", etag),
             ("cache-control", "private, max-age=31536000, immutable".to_string()),
             ("vary", "Authorization, Cookie".to_string()),
@@ -153,69 +187,38 @@ pub async fn media(
     )
         .into_response())
 }
-fn render(bytes: &[u8], icon: bool, size: &str) -> anyhow::Result<Vec<u8>> {
-    let mut reader = image::ImageReader::new(Cursor::new(bytes)).with_guessed_format()?;
-    let mut limits = image::Limits::default();
-    limits.max_image_width = Some(8192);
-    limits.max_image_height = Some(8192);
-    limits.max_alloc = Some(64 * 1024 * 1024);
-    reader.limits(limits);
-    let image = reader.decode()?;
-    let bounds = match (icon, size) {
-        (true, "thumb") => Some((176, 176)),
-        (false, "thumb") => Some((320, 180)),
-        (true, "client") => Some((256, 256)),
-        (false, "client") => Some((720, 405)),
-        (true, "screen") => Some((720, 720)),
-        (false, "screen") => Some((1280, 720)),
-        _ => None,
-    };
-    let image = if let Some((width, height)) = bounds {
-        if image.width() > width || image.height() > height {
-            image.resize(width, height, image::imageops::FilterType::Lanczos3)
-        } else {
-            image
-        }
-    } else {
-        image
-    };
-    let mut out = Vec::new();
-    image::codecs::jpeg::JpegEncoder::new_with_quality(&mut out, 90)
-        .encode_image(&image.to_rgb8())?;
-    Ok(out)
-}
 
-async fn fetch_image(url: &str) -> Result<Vec<u8>, ApiError> {
-    let mut reply = CLIENT
-        .get(url)
-        .send()
-        .await
-        .map_err(|_| ApiError::NotFound)?
-        .error_for_status()
-        .map_err(|_| ApiError::NotFound)?;
-    if reply.content_length().is_some_and(|n| n > MAX_IMAGE_BYTES as u64) {
-        return Err(ApiError::NotFound);
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn stale_sources_do_not_override_current_urls_or_resurrect_screenshots() {
+        let title = json!({"titleId":"0100000000000000","iconUrl":"https://new/icon","screenshots":[],"_media":[{"kind":"icon","position":0,"source":"https://old/icon","filename":"old.jpg","width":512,"height":512},{"kind":"screenshot","position":0,"source":"old","filename":"old.jpg","width":100,"height":100}]});
+        let icon = images(&title, "icon", &json!({"size":"THUMB"}));
+        assert!(
+            icon["url"]
+                .as_str()
+                .unwrap_or_default()
+                .contains(&crate::media::source_hash("https://new/icon"))
+        );
+        assert!(icon["width"].is_null());
+        let mut removed = title.clone();
+        removed["iconUrl"] = Value::Null;
+        assert!(images(&removed, "icon", &json!({})).is_null());
+        assert_eq!(images(&title, "screenshots", &json!({})), json!([]));
     }
-    let mut bytes = Vec::new();
-    while let Some(chunk) = reply.chunk().await.map_err(|_| ApiError::NotFound)? {
-        if bytes.len().saturating_add(chunk.len()) > MAX_IMAGE_BYTES {
-            return Err(ApiError::NotFound);
-        }
-        bytes.extend_from_slice(&chunk);
+    #[test]
+    fn disabled_local_media_returns_remote_sources() {
+        let title = json!({"titleId":"0100000000000000","iconUrl":"https://source/icon","_localMediaEnabled":false});
+        let image = images(&title, "icon", &json!({"size":"THUMB"}));
+        assert_eq!(image["url"], "https://source/icon");
+        assert_eq!(image["local"], false);
     }
-    Ok(bytes)
-}
-async fn save_cache(
-    directory: &std::path::Path,
-    path: &std::path::Path,
-    bytes: &[u8],
-) -> Result<(), ApiError> {
-    tokio::fs::create_dir_all(directory).await.map_err(|_| ApiError::Internal)?;
-    let temporary = directory.join(format!("{}.tmp", uuid::Uuid::new_v4()));
-    tokio::fs::write(&temporary, bytes).await.map_err(|_| ApiError::Internal)?;
-    let result = tokio::fs::rename(&temporary, path).await;
-    if result.is_err() {
-        let _ = tokio::fs::remove_file(temporary).await;
+    #[test]
+    fn persisted_dimensions_are_projected_for_requested_rendition() {
+        let title = json!({"titleId":"0100000000000000","bannerUrl":"https://image","_media":[{"kind":"banner","position":0,"source":"https://image","filename":"image.jpg","width":1920,"height":1080}]});
+        let image = images(&title, "banner", &json!({"size":"CLIENT"}));
+        assert_eq!(image["width"], 720);
+        assert_eq!(image["height"], 405);
     }
-    result.map_err(|_| ApiError::Internal)
 }

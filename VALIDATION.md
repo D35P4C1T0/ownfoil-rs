@@ -47,3 +47,68 @@ hardware, GitHub-hosted builders, or a long-running external TitleDB transfer.
 Report Switch results with the client name/version, URL path, authentication mode,
 operation, observed result, and relevant server log lines. Do not include console
 keys, passwords, private certificates, or `Hauth` values.
+
+## Sphaira / Ownfoil 2.5.0 parity implementation — 2026-10-09
+
+Server reference: Ownfoil `a9ac7479f7b54cd52731b24947ac0631cb77ba5f` (2.5.0).
+Client reference: Sphaira `338348e74b6d278bc570a9be5373d25197bf6c8d` (1.0.8).
+Rust checks use toolchain 1.98.0. The earlier 2.4.1 validation record is retained.
+
+The pinned Python schema generated 68 released-client response fixtures without
+keys, commercial content, or live TitleDB downloads. Scenarios include missing
+provider metadata filled by extraction, sparse custom/provider/extract precedence,
+two owned updates and a newer unowned update, DLC, bundles, compressed duplicates,
+multiple roots, pagination, search and sort orders. Eight locale mappings and
+27 rendition geometry examples are also captured. Regeneration rejects changed
+source hashes. Dedicated Rust contract tests replay every response exactly.
+
+A controlled HTTP benchmark runner is available in
+`scripts/parity/benchmark_sphaira.py`. Both servers must receive identical seeded
+content/metadata; it refuses inconsistent responses. No completed before/after
+latency, true peak-memory or traced-query-count comparison is recorded. Existing
+latency figures remain Rust-only observations and do not prove superiority.
+
+Prior native integration discovery and browsing were verified on a physical
+Switch, as recorded in CHANGELOG.md; console installation remained unverified.
+The new parity features and complete matrix below are **pending for every row**: no
+Switch was available to these implementation agents.
+
+| Device check (Sphaira 1.0.8) | Required scenarios | Result |
+| --- | --- | --- |
+| Discovery and identity | LAN, manual HTTPS, restart, saved shop UID | Pending |
+| Authentication | Private valid/invalid login, public shop, cached artwork | Pending |
+| Browsing | New/Updates/DLC/All/Search, each sort, multiple pages, details | Pending |
+| Metadata | NACP name/publisher/icon/version, absent TitleDB, locale switch | Pending |
+| Installation | Base/update/DLC, NSP/NSZ/XCI/XCZ, bundles, both preferences, roots | Pending |
+| Resume | Interrupt and resume an installation, confirm selected bytes/content | Pending |
+| Prepared offline browsing | Download artwork, disconnect external network, browse/refresh | Pending |
+
+Record device/server builds, authentication mode, scenario, result and relevant
+logs before claiming end-to-end parity. Encrypted Control NCA extraction and real
+archive behavior also need local owned-content checks; synthetic NACP/RomFS tests
+do not substitute for them. Never commit keys, passwords, or commercial archives.
+
+Automated parity run: **151 unit/integration tests plus eight route-contract
+tests passed (159 total), four optional tests ignored**. The separately invoked
+ignored scaling benchmark also passed, using Rust 1.98.0 on macOS aarch64, debug
+build, sequential requests through the in-process Axum test transport. The
+current implementation recorded these warm response times (20 samples per
+query; library seeding and first provider synchronization excluded):
+
+| Synthetic base titles | Sort | p50 ms | p95 ms |
+| ---: | --- | ---: | ---: |
+| 100 | Name | 37.3 | 77.4 |
+| 100 | Added time | 32.8 | 37.3 |
+| 100 | Release date | 33.1 | 34.2 |
+| 10,000 | Name | 160.0 | 161.6 |
+| 10,000 | Added time | 155.0 | 199.1 |
+| 10,000 | Release date | 154.3 | 156.0 |
+
+A 500 ms warm p95 budget is enforced by this optional local benchmark, with
+`OWNFOIL_BENCHMARK_P95_BUDGET_US` available for explicitly chosen hardware budgets.
+Both sizes hydrated exactly 40 titles/40 apps/zero file rows for the card fields;
+a normal regression test separately verifies seven titles/apps/files for a
+seven-item page requesting file relationships. Other parallel development checks
+ran on this host, so these are scaling smoke measurements, not a controlled
+Python/Rust or before/after comparison. Raw measurements and first-provider
+synchronization timings: [JSON record](docs/SPHAIRA_SCALING_2026-10-09.json).

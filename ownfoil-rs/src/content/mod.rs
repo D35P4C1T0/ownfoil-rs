@@ -13,6 +13,48 @@ use std::{
     path::{Path, PathBuf},
 };
 
+/// Read bounded tickets shared by identification and Control NCA decryption.
+pub fn metadata_title_keys(path: &Path) -> anyhow::Result<nx_archive::formats::TitleKeys> {
+    let (mut file, root) = archive::root(path)?;
+    let entries = archive::leaves(&mut file, &root)?;
+    verification::title_keys(&file, &entries)
+}
+
+/// Read a single bounded NCA/NCZ member for metadata extraction.
+pub fn metadata_member(path: &Path, name: &str, limit: usize) -> anyhow::Result<Vec<u8>> {
+    struct BoundedBytes {
+        bytes: Vec<u8>,
+        limit: usize,
+    }
+    impl Write for BoundedBytes {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if bytes.len() > self.limit.saturating_sub(self.bytes.len()) {
+                return Err(std::io::Error::other("Control NCA exceeds extraction limit"));
+            }
+            self.bytes.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let (mut file, root) = archive::root(path)?;
+    let entries = archive::leaves(&mut file, &root)?;
+    let compressed = name.strip_suffix(".nca").map(|stem| format!("{stem}.ncz"));
+    let entry = entries
+        .iter()
+        .find(|entry| entry.name == name || compressed.as_deref() == Some(entry.name.as_str()))
+        .context("Missing Control NCA")?;
+    let mut out = BoundedBytes { bytes: Vec::new(), limit };
+    if entry.name.ends_with(".ncz") {
+        ncz::decompress(&file, entry, &mut out)?;
+    } else {
+        ensure!(entry.size <= limit as u64, "Control NCA exceeds extraction limit");
+        std::io::copy(&mut archive::reader(&file, entry)?, &mut out)?;
+    }
+    Ok(out.bytes)
+}
+
 struct Temporary(PathBuf);
 impl Drop for Temporary {
     fn drop(&mut self) {

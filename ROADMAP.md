@@ -184,3 +184,24 @@ The external validation gates and codec differences in the parity notes remain.
 
 See [SPHAIRA.md](docs/SPHAIRA.md) for scope and validation. This adds native client
 compatibility; the earlier 2.4.1 parity target does not imply full 2.5 parity.
+
+The [Sphaira 2.5.0 parity plan](docs/SPHAIRA_PARITY_PLAN.md) defines the remaining
+metadata extraction, managed artwork, file-selection preferences, SQL query, and
+physical-device validation milestones for the fuller upstream implementation.
+
+### Implementation categories (`spharia-support`)
+
+- [x] Metadata: Control NCA/NACP extraction, locale fallback, provenance,
+  newest-owned metadata, source precedence, and migration/backfill.
+- [x] Artwork and processing: persistent media slots/dimensions, shared ingestion,
+  background downloads, retries/cancellation, offline serving, and safe collection.
+- [x] Catalog and selection: configurable bundle preference, consistent download
+  copy selection, SQL filtering/pagination, and page-scoped hydration.
+- [~] Parity and validation: pinned 2.5.0 comparisons, synthetic fixtures,
+  reproducible benchmarks, migration/regression checks, and device test matrix.
+
+The physical Switch checks remain external release gates even after automated
+implementation and validation are complete.
+Direct app queries use SQL pagination; mixed, fragment, and title-root queries
+retain the existing loader. Comparative Python/Rust benchmarks and real-container
+checks remain pending; synthetic fixtures establish the automated backend coverage.

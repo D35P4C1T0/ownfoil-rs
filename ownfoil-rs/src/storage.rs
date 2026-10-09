@@ -19,6 +19,18 @@ pub struct Storage {
     db_path: PathBuf,
 }
 
+/// One owned Control NCA's localized metadata and provenance.
+#[derive(Debug, Clone)]
+pub struct StoredExtraction {
+    pub title_id: String,
+    pub app_id: String,
+    pub version: u32,
+    pub record: serde_json::Map<String, serde_json::Value>,
+    pub display_version: Option<String>,
+    pub language: Option<String>,
+    pub icon_language: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Library {
     pub id: i64,
@@ -214,6 +226,96 @@ impl Storage {
         }).await
     }
 
+    /// Completed empty extraction (DLC) is remembered. Failures retry only after
+    /// a changed fingerprint or an explicit reset, avoiding scan retry storms.
+    pub async fn extraction_needed(&self, file_id: i64, fingerprint: &str) -> Result<bool> {
+        let fingerprint = fingerprint.to_string();
+        self.with_connection(move |conn| {
+            let previous: Option<String> = conn
+                .query_row(
+                    "SELECT fingerprint FROM extraction_state WHERE file_id=?1",
+                    [file_id],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            Ok(previous.as_deref() != Some(fingerprint.as_str()))
+        })
+        .await
+    }
+
+    pub async fn reset_extraction(&self, file_id: Option<i64>) -> Result<()> {
+        self.with_connection(move |conn| {
+            if let Some(id) = file_id {
+                conn.execute("DELETE FROM extraction_state WHERE file_id=?1", [id])?;
+            } else {
+                conn.execute("DELETE FROM extraction_state", [])?;
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    pub async fn store_extraction(
+        &self,
+        file_id: i64,
+        fingerprint: &str,
+        locale: &str,
+        metadata: Vec<StoredExtraction>,
+        error: Option<String>,
+    ) -> Result<()> {
+        let fingerprint = fingerprint.to_string();
+        let locale = locale.to_string();
+        self.with_connection(move |conn| {
+            let transaction=conn.transaction()?;
+            // Preserve working extraction while keys or corrupt replacements fail.
+            if error.is_none() {
+                transaction.execute("DELETE FROM extraction_sources WHERE file_id=?1",[file_id])?;
+                for source in metadata {
+                    transaction.execute("INSERT INTO extraction_sources(file_id,title_id,app_id,version,locale,language,icon_language,record,display_version) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",params![file_id,source.title_id,source.app_id,source.version,locale,source.language,source.icon_language,serde_json::Value::Object(source.record).to_string(),source.display_version])?;
+                    transaction.execute("UPDATE apps SET display_version=?1 WHERE app_id=?2 AND CAST(app_version AS INTEGER)=?3",params![source.display_version,source.app_id,source.version])?;
+                }
+            }
+            transaction.execute("INSERT INTO extraction_state(file_id,fingerprint,locale,status,error) VALUES(?1,?2,?3,?4,?5) ON CONFLICT(file_id) DO UPDATE SET fingerprint=excluded.fingerprint,locale=excluded.locale,status=excluded.status,error=excluded.error",params![file_id,fingerprint,locale,if error.is_some(){"failed"}else{"complete"},error])?;
+            reconcile_extracted(&transaction)?;
+            transaction.commit()?;
+            Ok(())
+        }).await
+    }
+
+    pub async fn extracted_title_records(&self) -> Result<Vec<(String, serde_json::Value)>> {
+        self.source_override_records("extracted_title_overrides").await
+    }
+
+    pub async fn custom_title_records(&self) -> Result<Vec<(String, serde_json::Value)>> {
+        self.source_override_records("title_overrides").await
+    }
+
+    async fn source_override_records(
+        &self,
+        table: &'static str,
+    ) -> Result<Vec<(String, serde_json::Value)>> {
+        self.with_connection(move |conn| {
+            let mut stmt =
+                conn.prepare(&format!("SELECT title_id,record FROM {table} ORDER BY title_id"))?;
+            let rows =
+                stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?;
+            rows.map(|row| {
+                let (id, raw) = row?;
+                let value = serde_json::from_str(&raw).map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        1,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?;
+                Ok((id, value))
+            })
+            .collect::<std::result::Result<Vec<_>, rusqlite::Error>>()
+            .map_err(StorageError::from)
+        })
+        .await
+    }
+
     pub async fn list_libraries(&self) -> Result<Vec<Library>> {
         self.with_connection(move |conn| {
             let mut stmt =
@@ -320,9 +422,9 @@ impl Storage {
 
     pub async fn delete_file(&self, id: i64) -> Result<bool> {
         self.with_connection(move |conn| {
-            conn.execute("DELETE FROM files WHERE id = ?1", params![id])
-                .map(|count| count > 0)
-                .map_err(StorageError::from)
+            let deleted = conn.execute("DELETE FROM files WHERE id = ?1", params![id])? > 0;
+            reconcile_extracted(conn)?;
+            Ok(deleted)
         })
         .await
     }
@@ -610,6 +712,7 @@ impl Storage {
             for id in stale_ids {
                 transaction.execute("DELETE FROM files WHERE id = ?1", params![id])?;
             }
+            reconcile_extracted(&transaction)?;
             transaction.execute(
                 "UPDATE apps SET owned = EXISTS(SELECT 1 FROM app_files WHERE app_id = apps.id)",
                 [],
@@ -727,12 +830,25 @@ fn open_connection(path: &Path) -> rusqlite::Result<Connection> {
     Ok(conn)
 }
 
+/// Highest owned version wins; equal versions prefer the oldest durable file ID.
+/// Imported overrides without source provenance remain until a source is extracted.
+fn reconcile_extracted(conn: &Connection) -> rusqlite::Result<()> {
+    conn.execute_batch("DELETE FROM extracted_title_overrides WHERE title_id IN (SELECT title_id FROM extraction_managed_titles);
+        INSERT OR IGNORE INTO extraction_managed_titles SELECT DISTINCT title_id FROM extraction_sources;
+        INSERT OR REPLACE INTO extracted_title_overrides(title_id,record)
+        SELECT title_id,record FROM (SELECT title_id,record,ROW_NUMBER() OVER(PARTITION BY title_id ORDER BY version DESC,file_id ASC,app_id ASC) AS rank FROM extraction_sources s WHERE EXISTS (
+            SELECT 1 FROM apps a JOIN app_files af ON af.app_id=a.id JOIN titles t ON t.id=a.title_id
+            WHERE af.file_id=s.file_id AND a.app_id=s.app_id AND CAST(a.app_version AS INTEGER)=s.version AND t.title_id=s.title_id
+        )) WHERE rank=1;")
+}
+
 fn initialize_schema(conn: &mut Connection) -> Result<()> {
     if table_has_column(conn, "files", "filepath")? {
         migrate_upstream_schema(conn)?;
     } else {
         create_schema(conn)?;
     }
+    conn.execute_batch("CREATE INDEX IF NOT EXISTS apps_title_owned ON apps(title_id,app_id,owned); CREATE INDEX IF NOT EXISTS apps_id_owned_version ON apps(app_id,owned,app_version); CREATE INDEX IF NOT EXISTS app_files_file_app ON app_files(file_id,app_id);")?;
     Ok(())
 }
 
@@ -750,6 +866,15 @@ fn create_schema(conn: &Connection) -> rusqlite::Result<()> {
         );
         CREATE TABLE IF NOT EXISTS title_overrides (title_id TEXT PRIMARY KEY, record TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS extracted_title_overrides (title_id TEXT PRIMARY KEY, record TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS extraction_managed_titles(title_id TEXT PRIMARY KEY);
+        CREATE TABLE IF NOT EXISTS extraction_state(file_id INTEGER PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,fingerprint TEXT NOT NULL,locale TEXT NOT NULL,status TEXT NOT NULL,error TEXT);
+        CREATE TABLE IF NOT EXISTS extraction_sources(file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,title_id TEXT NOT NULL,app_id TEXT NOT NULL,version INTEGER NOT NULL,locale TEXT NOT NULL,language TEXT,icon_language TEXT,record TEXT NOT NULL,display_version TEXT,PRIMARY KEY(file_id,app_id,version));
+        CREATE INDEX IF NOT EXISTS extraction_sources_title ON extraction_sources(title_id,version DESC,file_id);
+        CREATE TABLE IF NOT EXISTS media_assets(kind TEXT NOT NULL,filename TEXT NOT NULL,width INTEGER NOT NULL,height INTEGER NOT NULL,PRIMARY KEY(kind,filename));
+        CREATE TABLE IF NOT EXISTS media_slots(title_id TEXT NOT NULL,kind TEXT NOT NULL,position INTEGER NOT NULL,source TEXT NOT NULL,filename TEXT NOT NULL,width INTEGER NOT NULL,height INTEGER NOT NULL,PRIMARY KEY(title_id,kind,position));
+        CREATE TABLE IF NOT EXISTS graph_app_dates(app_id TEXT NOT NULL,app_version TEXT NOT NULL,release_date TEXT,PRIMARY KEY(app_id,app_version));
+        CREATE TABLE IF NOT EXISTS graph_provider_metadata(title_id TEXT PRIMARY KEY,record TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS graph_provider_state(singleton INTEGER PRIMARY KEY CHECK(singleton=1),generation TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS libraries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             path TEXT NOT NULL UNIQUE,
@@ -1398,6 +1523,74 @@ mod tests {
             .filter_map(std::result::Result::ok)
             .any(|entry| entry.file_name().to_string_lossy().starts_with(".backup_ownfoil_"));
         assert!(has_backup);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn extracted_sources_select_owned_newest_and_restore_after_deletion() -> anyhow::Result<()>
+    {
+        let (_dir, storage) = temp_storage().await?;
+        let mut old = content_file("old.nsp", 100);
+        old.version = Some(65536);
+        old.kind = ContentKind::Update;
+        old.title_id = Some("0100000000000800".into());
+        let mut new = old.clone();
+        new.name = "new.nsp".into();
+        new.relative_path = "new.nsp".into();
+        new.version = Some(131_072);
+        let files = storage.reconcile_library_scan("/games".into(), vec![old, new]).await?;
+        let old = files
+            .iter()
+            .find(|file| file.name == "old.nsp")
+            .ok_or_else(|| anyhow::anyhow!("old file absent"))?
+            .id;
+        let new = files
+            .iter()
+            .find(|file| file.name == "new.nsp")
+            .ok_or_else(|| anyhow::anyhow!("new file absent"))?
+            .id;
+        let old = i64::try_from(old)?;
+        let new = i64::try_from(new)?;
+        let source = |name: &str, version| super::StoredExtraction {
+            title_id: "0100000000000000".into(),
+            app_id: "0100000000000800".into(),
+            version,
+            record: serde_json::json!({"name":name}).as_object().cloned().unwrap_or_default(),
+            display_version: Some(name.into()),
+            language: Some("AmericanEnglish".into()),
+            icon_language: None,
+        };
+        storage
+            .store_extraction(new, "new", "US.en", vec![source("Newest", 131_072)], None)
+            .await?;
+        storage.store_extraction(old, "old", "US.en", vec![source("Older", 65536)], None).await?;
+        assert_eq!(storage.extracted_title_records().await?[0].1["name"], "Newest");
+        let reopened = Storage::open(storage.path()).await?;
+        assert!(!reopened.extraction_needed(new, "new").await?);
+        assert!(reopened.extraction_needed(new, "locale changed").await?);
+        // Missing keys preserve usable metadata and remember the failed attempt.
+        reopened
+            .store_extraction(new, "no keys", "US.en", vec![], Some("missing keys".into()))
+            .await?;
+        assert_eq!(reopened.extracted_title_records().await?[0].1["name"], "Newest");
+        assert!(!reopened.extraction_needed(new, "no keys").await?);
+        reopened.reset_extraction(Some(new)).await?;
+        assert!(reopened.extraction_needed(new, "no keys").await?);
+        reopened.delete_file(new).await?;
+        assert_eq!(reopened.extracted_title_records().await?[0].1["name"], "Older");
+        // The source's app relation changes before a corrupt replacement fails extraction.
+        reopened
+            .with_connection(move |conn| {
+                conn.execute("DELETE FROM app_files WHERE file_id=?1", [old])?;
+                Ok(())
+            })
+            .await?;
+        reopened
+            .store_extraction(old, "replacement", "US.en", vec![], Some("corrupt".into()))
+            .await?;
+        assert!(reopened.extracted_title_records().await?.is_empty());
+        reopened.store_extraction(old, "empty", "US.en", vec![], None).await?;
+        assert!(!reopened.extraction_needed(old, "empty").await?);
         Ok(())
     }
 

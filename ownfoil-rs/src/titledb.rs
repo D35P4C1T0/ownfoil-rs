@@ -185,52 +185,78 @@ impl TitleDb {
     pub async fn lookup(&self, title_id: &str) -> Option<TitleInfo> {
         let normalized = title_id.to_ascii_uppercase();
         let guard = self.inner.lock().await;
-        let mut info = guard
-            .db
-            .query_row(
-                "SELECT icon_url,banner_url,name,record FROM titles WHERE id=?1",
-                [&normalized],
-                |row| {
-                    Ok(TitleInfo {
-                        icon_url: row.get(0)?,
-                        banner_url: row.get(1)?,
-                        name: row.get(2)?,
-                        record: serde_json::from_str(&row.get::<_, String>(3)?).unwrap_or_default(),
-                    })
-                },
-            )
-            .optional()
-            .ok()
-            .flatten();
-        if let Ok(Some(raw)) = guard
-            .db
-            .query_row("SELECT record FROM custom_titles WHERE id=?1", [&normalized], |row| {
-                row.get::<_, String>(0)
-            })
-            .optional()
-        {
-            if let Ok(record) =
-                serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&raw)
+        let mut merged = serde_json::Map::new();
+        // The tagged upstream schema orders sources custom > titledb > extract.
+        for table in ["extracted_titles", "titles", "custom_titles"] {
+            let sql = format!("SELECT record FROM {table} WHERE id=?1");
+            if let Ok(Some(raw)) =
+                guard.db.query_row(&sql, [&normalized], |row| row.get::<_, String>(0)).optional()
             {
-                let info = info.get_or_insert_with(TitleInfo::default);
-                for (key, value) in record {
-                    if !value.is_null() {
-                        info.record.insert(key, value);
+                if let Ok(record) =
+                    serde_json::from_str::<serde_json::Map<String, serde_json::Value>>(&raw)
+                {
+                    for (key, value) in record {
+                        if !value.is_null() && value.as_str() != Some("") {
+                            merged.insert(key, value);
+                        }
                     }
                 }
-                for (key, field) in [
-                    ("name", &mut info.name),
-                    ("iconUrl", &mut info.icon_url),
-                    ("bannerUrl", &mut info.banner_url),
-                ] {
-                    if let Some(value) = info.record.get(key).and_then(serde_json::Value::as_str) {
-                        *field = Some(value.to_string());
+            }
+            if table == "titles" {
+                if let Ok(Some((icon, banner, name))) = guard
+                    .db
+                    .query_row(
+                        "SELECT icon_url,banner_url,name FROM titles WHERE id=?1",
+                        [&normalized],
+                        |row| {
+                            Ok((
+                                row.get::<_, Option<String>>(0)?,
+                                row.get::<_, Option<String>>(1)?,
+                                row.get::<_, Option<String>>(2)?,
+                            ))
+                        },
+                    )
+                    .optional()
+                {
+                    for (key, value) in [("iconUrl", icon), ("bannerUrl", banner), ("name", name)] {
+                        if let Some(value) = value.filter(|value| !value.is_empty()) {
+                            merged.insert(key.into(), value.into());
+                        }
                     }
                 }
             }
         }
+        let info = (!merged.is_empty()).then(|| TitleInfo {
+            icon_url: merged.get("iconUrl").and_then(serde_json::Value::as_str).map(str::to_string),
+            banner_url: merged
+                .get("bannerUrl")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string),
+            name: merged.get("name").and_then(serde_json::Value::as_str).map(str::to_string),
+            record: merged,
+        });
         drop(guard);
         info
+    }
+
+    /// Replace the durable extraction projection without promoting it to custom.
+    pub async fn set_extracted_overrides(
+        &self,
+        records: Vec<(String, serde_json::Value)>,
+    ) -> Result<(), TitleDbError> {
+        let mut guard = self.inner.lock().await;
+        let transaction = guard.db.transaction()?;
+        transaction.execute("DELETE FROM extracted_titles", [])?;
+        for (id, record) in records {
+            transaction.execute(
+                "INSERT INTO extracted_titles(id,record) VALUES(?1,?2)",
+                params![id.to_ascii_uppercase(), record.to_string()],
+            )?;
+        }
+        transaction.commit()?;
+        drop(guard);
+        self.generation.fetch_add(1, Ordering::AcqRel);
+        Ok(())
     }
 
     pub async fn set_override(
@@ -445,6 +471,10 @@ impl TitleDb {
 
     pub async fn entry_count(&self) -> usize {
         title_count(&self.inner.lock().await.db)
+    }
+
+    pub fn cache_identity(&self) -> usize {
+        Arc::as_ptr(&self.inner) as usize
     }
 
     pub fn generation(&self) -> u64 {
@@ -1448,6 +1478,7 @@ fn initialize_database(db: &Connection) -> Result<(), rusqlite::Error> {
          CREATE TABLE IF NOT EXISTS titles (
            id TEXT PRIMARY KEY, icon_url TEXT, banner_url TEXT, name TEXT, record TEXT NOT NULL DEFAULT '{}'
          ) WITHOUT ROWID;
+         CREATE TABLE IF NOT EXISTS extracted_titles (id TEXT PRIMARY KEY,record TEXT NOT NULL) WITHOUT ROWID;
          CREATE TABLE IF NOT EXISTS custom_titles (id TEXT PRIMARY KEY,record TEXT NOT NULL) WITHOUT ROWID;
          CREATE TABLE IF NOT EXISTS versions (
            title_id TEXT PRIMARY KEY, latest_version INTEGER, versions TEXT NOT NULL, release_dates TEXT NOT NULL DEFAULT '{}'
@@ -1936,5 +1967,45 @@ mod tests {
             european.lookup("0100000000020000").await.and_then(|info| info.name),
             Some("EU title".to_string())
         );
+    }
+    #[tokio::test]
+    async fn extracted_metadata_is_fallback_below_provider_and_custom() -> Result<(), TitleDbError>
+    {
+        let db = TitleDb::from_entries([(
+            "0100000000000000".into(),
+            TitleInfo { name: Some("Provider".into()), ..TitleInfo::default() },
+        )]);
+        db.set_extracted_overrides(vec![
+            (
+                "0100000000000000".into(),
+                serde_json::json!({"name":"Extracted","publisher":"File publisher"}),
+            ),
+            ("0100000000001000".into(), serde_json::json!({"name":"Homebrew"})),
+        ])
+        .await?;
+        let record = db.lookup("0100000000000000").await.ok_or(TitleDbError::InvalidFormat)?;
+        assert_eq!(record.name.as_deref(), Some("Provider"));
+        assert_eq!(record.record["publisher"], "File publisher");
+        db.set_override(
+            "0100000000000000",
+            Some(&serde_json::json!({"name":"Custom","publisher":null})),
+        )
+        .await?;
+        assert_eq!(
+            db.lookup("0100000000000000").await.and_then(|info| info.name).as_deref(),
+            Some("Custom")
+        );
+        db.set_override("0100000000000000", None).await?;
+        assert_eq!(
+            db.lookup("0100000000000000").await.and_then(|info| info.name).as_deref(),
+            Some("Provider")
+        );
+        assert_eq!(
+            db.lookup("0100000000001000").await.and_then(|info| info.name).as_deref(),
+            Some("Homebrew")
+        );
+        db.set_extracted_overrides(vec![]).await?;
+        assert!(db.lookup("0100000000001000").await.is_none());
+        Ok(())
     }
 }

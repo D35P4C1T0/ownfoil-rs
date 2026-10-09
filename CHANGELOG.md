@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+- Extract localized name, publisher, icon, and display version from Control
+  NCA/NACP metadata, including bounded compressed-member decoding. Persist
+  extraction provenance and select the newest available owned source while
+  retaining custom and TitleDB metadata precedence.
+- Persist artwork slots and dimensions, preserve image formats, and add
+  background artwork downloads, offline serving, usage reporting, and safe
+  collection of unreferenced media.
+- Add configurable preference for bundled download copies and execute native
+  app catalog filters, grouping, sorting, and pagination in SQLite with scoped
+  relationship hydration.
+- Add responses captured from the pinned Ownfoil 2.5.0 schema and controlled
+  benchmark tooling. New end-to-end Switch installation validation remains open.
+- Validate 159 automated tests, including 68 exact upstream response comparisons;
+  four optional tests are ignored in the normal suite, and the scaling benchmark
+  passes separately. Strict CI Clippy, formatting, and whitespace checks pass.
+
 ## v0.4.0 - 2026-10-09
 
 ### Sphaira support

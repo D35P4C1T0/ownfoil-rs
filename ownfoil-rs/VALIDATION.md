@@ -122,3 +122,42 @@ not replace hardware/client checks or the complete golden HTTP matrix.
   verification while later external modifications invalidate it.
 - Upstream HEAD `84f0b352332cf4ac467db16228b10779f2eb2108` differs from the pinned
   feature baseline only in README documentation.
+
+## Sphaira 2.5.0 comparison tooling — October 9, 2026
+
+The retained 126-case 2.4.1 matrix remains unchanged. The new
+`tests/fixtures/sphaira_250_parity.json` was captured from the real Ownfoil 2.5.0
+schema using synthetic upstream test data. It contains 68 exact released-client
+responses plus media defaults/geometry and locale mappings. It records source
+hashes and both upstream/client revisions. Synthetic fixture attribution remains
+AGPL-3.0; no console keys or commercial content are included.
+
+```sh
+python scripts/parity/capture_sphaira_250.py /path/to/ownfoil-2.5.0 ownfoil-rs/tests/fixtures/sphaira_250_parity.json
+cargo +1.98.0 test --workspace --locked --offline sphaira_matches_250_released_client_response_matrix
+cargo +1.98.0 test --workspace --locked --offline sphaira_250_artwork_geometry_and_settings_defaults
+python scripts/parity/benchmark_sphaira.py --server upstream=http://127.0.0.1:8465 --server rust=http://127.0.0.1:8466 --expected-base-count 10000 --output /tmp/sphaira-benchmark.json
+```
+
+The capture requires the pinned upstream requirements and pytest installed;
+network access is unnecessary after dependency installation. Benchmark servers
+must have identical data before running. Repeat for small and large libraries,
+record CPU/build modes, and clear artwork caches before a cold-artwork run.
+The runner records sampled RSS, not a true peak-memory high-water mark; SQL query
+counts require server tracing. No controlled comparative benchmark is completed. The current-branch Rust
+scaling smoke benchmark has been executed separately and passed its local
+500 ms warm p95 budget at100/10,000 titles with page-scoped hydration.
+
+See [the device matrix](../VALIDATION.md) for pending physical Switch validation.
+Automated server fixtures do not prove console installation or performance parity.
+
+```sh
+OWNFOIL_BENCHMARK_OUTPUT=/tmp/sphaira-scaling.json cargo +1.98.0 test --workspace --locked --offline sphaira_catalog_scaling_benchmark -- --ignored
+```
+
+The debug/in-process/sequential benchmark records first-provider synchronization
+separately from warm catalog responses and asserts 40 hydrated apps at either
+size. It does not count all SQLite statements or measure true peak memory.
+Results, mode, architecture and budget are retained in
+[the dated scaling record](../docs/SPHAIRA_SCALING_2026-10-09.json). Full current
+suite: 159 passed across unit/integration/route tests, four ignored.

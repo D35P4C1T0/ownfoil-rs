@@ -15,6 +15,10 @@ use tracing::{debug, warn};
 
 use crate::catalog::{ContentFile, ContentKind, IdentifiedContent};
 
+#[path = "content_metadata.rs"]
+mod metadata;
+pub use metadata::read_container_metadata;
+
 #[derive(Clone)]
 struct CloneReader(Arc<Mutex<File>>);
 

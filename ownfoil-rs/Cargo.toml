@@ -31,7 +31,7 @@ notify = "7.0"
 nx-archive = "0.1.2"
 percent-encoding = "2.3"
 regex = "1.11"
-rusqlite = { version = "0.32", features = ["bundled"] }
+rusqlite = { version = "0.32", features = ["bundled", "functions"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 serde_yaml = "0.9"

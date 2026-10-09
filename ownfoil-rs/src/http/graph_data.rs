@@ -1,5 +1,7 @@
 //! GraphQL data projection and common filter semantics.
 use super::AppState;
+#[path = "graph_sql.rs"]
+mod sql;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -15,33 +17,73 @@ pub struct GraphData {
 }
 impl GraphData {
     pub async fn load(state: &AppState, can_admin: bool) -> anyhow::Result<Self> {
-        Self::load_scoped(state, can_admin, false).await
+        Self::load_scoped(state, can_admin, false, None, true, true).await
     }
     pub async fn load_apps(state: &AppState, can_admin: bool) -> anyhow::Result<Self> {
         // The storage-free fallback discovers synthetic apps while hydrating
         // TitleDB, so it still needs the complete metadata snapshot.
-        Self::load_scoped(state, can_admin, state.storage.is_some()).await
+        Self::load_scoped(state, can_admin, state.storage.is_some(), None, true, true).await
     }
     #[allow(clippy::too_many_lines)]
+    #[allow(clippy::fn_params_excessive_bools)] // Independent authorization and selected-field hydration gates.
     async fn load_scoped(
         state: &AppState,
         can_admin: bool,
         apps_only: bool,
+        scope: Option<Vec<String>>,
+        hydrate_files: bool,
+        hydrate_media: bool,
     ) -> anyhow::Result<Self> {
         let mut data = Self { can_admin, ..Self::default() };
         if !apps_only {
             data.titles = state.titledb.records().await;
         }
         let mut title_overrides = Vec::new();
-        let files = state.catalog.read().await.files().to_vec();
+        let file_ids = if let (Some(storage), Some(ids)) = (&state.storage, &scope) {
+            let ids = serde_json::to_string(ids)?;
+            Some(storage.with_connection(move |conn| {
+                let mut stmt = conn.prepare("SELECT DISTINCT af.file_id FROM app_files af JOIN apps a ON af.app_id=a.id JOIN titles t ON a.title_id=t.id WHERE t.title_id IN (SELECT value FROM json_each(?1))")?;
+                let rows = stmt.query_map([ids], |r| r.get::<_,i64>(0))?.collect::<Result<BTreeSet<_>,_>>()?;
+                Ok(rows)
+            }).await?)
+        } else {
+            None
+        };
+        let files = if hydrate_files {
+            state
+                .catalog
+                .read()
+                .await
+                .files()
+                .iter()
+                .filter(|file| {
+                    file_ids
+                        .as_ref()
+                        .is_none_or(|ids| ids.contains(&i64::try_from(file.id).unwrap_or(-1)))
+                })
+                .cloned()
+                .collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
         let mut links = BTreeMap::<String, Vec<String>>::new();
         let mut stored_titles = Vec::new();
         if let Some(storage) = &state.storage {
-            let (apps,stored_files,links_found,overrides,titles)=storage.with_connection(|conn| {
-                fn query(conn:&rusqlite::Connection,sql:&str)->Result<Vec<Value>,crate::storage::StorageError> {
-                    let mut stmt=conn.prepare(sql)?;
+            let scope_json = serde_json::to_string(&scope)?;
+            let (apps,stored_files,links_found,overrides,titles)=storage.with_connection(move |conn| {
+                fn query(conn:&rusqlite::Connection,sql:&str,scope:&str)->Result<Vec<Value>,crate::storage::StorageError> {
+                    let sql = if scope == "null" { sql.to_string() } else {
+                        let condition = if sql.contains("UNION ALL") { "title_id IN (SELECT value FROM json_each(?1) UNION SELECT a.app_id FROM apps a JOIN titles t ON a.title_id=t.id WHERE t.title_id IN (SELECT value FROM json_each(?1)))" }
+                        else if sql.contains("FROM apps a") { "t.title_id IN (SELECT value FROM json_each(?1))" }
+                        else if sql.contains("FROM app_files") { "app_id IN (SELECT a.id FROM apps a JOIN titles t ON a.title_id=t.id WHERE t.title_id IN (SELECT value FROM json_each(?1)))" }
+                        else if sql.contains("FROM files") { "id IN (SELECT af.file_id FROM app_files af JOIN apps a ON af.app_id=a.id JOIN titles t ON a.title_id=t.id WHERE t.title_id IN (SELECT value FROM json_each(?1)))" }
+                        else { "title_id IN (SELECT value FROM json_each(?1))" };
+                        if sql.contains("UNION ALL") { sql.replace(" UNION ALL ", &format!(" WHERE {condition} UNION ALL ")) + &format!(" WHERE {condition}") }
+                        else { format!("{sql} WHERE {condition}") }
+                    };
+                    let mut stmt=conn.prepare(&sql)?;
                     let names=stmt.column_names().iter().map(|s|(*s).to_string()).collect::<Vec<_>>();
-                    let rows=stmt.query_map([],|r| {
+                    let rows=stmt.query_map(rusqlite::params_from_iter((scope != "null").then_some(scope)),|r| {
                         let mut value=serde_json::Map::new();
                         for (i,name) in names.iter().enumerate() {
                             let item=match r.get_ref(i)? {
@@ -54,10 +96,10 @@ impl GraphData {
                         }Ok(Value::Object(value))
                     })?;Ok(rows.collect::<Result<Vec<_>,_>>()?)
                 }
-                Ok((query(conn,"SELECT a.id,t.title_id AS titleId,a.app_id AS appId,CAST(a.app_version AS INTEGER) AS appVersion,a.app_type AS appType,a.display_version AS displayVersion,a.owned FROM apps a JOIN titles t ON a.title_id=t.id")?,
-                    query(conn,"SELECT id,download_token AS downloadToken,library_id AS libraryId,download_count AS downloadCount,identification_type AS identificationType,identification_error AS identificationError,identification_attempts AS identificationAttempts,nb_content AS nbContent,organized,signature_valid AS signatureValid,hash_valid AS hashValid,hash_modified AS hashModified,verification_error AS verificationError,verified_at AS verifiedAt,mtime,added_at AS addedAt FROM files")?,
-                    query(conn,"SELECT app_id,file_id FROM app_files")?,query(conn,"SELECT title_id,record,'extract' AS source FROM extracted_title_overrides UNION ALL SELECT title_id,record,'custom' AS source FROM title_overrides")?,
-                    query(conn,"SELECT title_id AS titleId,have_base AS haveBase,up_to_date AS upToDate,complete FROM titles")?))
+                Ok((query(conn,"SELECT a.id,t.title_id AS titleId,a.app_id AS appId,CAST(a.app_version AS INTEGER) AS appVersion,a.app_type AS appType,a.display_version AS displayVersion,a.owned FROM apps a JOIN titles t ON a.title_id=t.id",&scope_json)?,
+                    if hydrate_files { query(conn,"SELECT id,download_token AS downloadToken,library_id AS libraryId,download_count AS downloadCount,identification_type AS identificationType,identification_error AS identificationError,identification_attempts AS identificationAttempts,nb_content AS nbContent,organized,signature_valid AS signatureValid,hash_valid AS hashValid,hash_modified AS hashModified,verification_error AS verificationError,verified_at AS verifiedAt,mtime,added_at AS addedAt FROM files",&scope_json)? } else { Vec::new() },
+                    query(conn,"SELECT app_id,file_id FROM app_files",&scope_json)?,query(conn,"SELECT title_id,record,'extract' AS source FROM extracted_title_overrides UNION ALL SELECT title_id,record,'custom' AS source FROM title_overrides",&scope_json)?,
+                    query(conn,"SELECT title_id AS titleId,have_base AS haveBase,up_to_date AS upToDate,complete FROM titles",&scope_json)?))
             }).await?;
             data.apps = apps;
             stored_titles = titles;
@@ -106,8 +148,10 @@ impl GraphData {
                 data.files.push(value);
             }
             title_overrides = overrides;
-            data.tasks = crate::tasks::list(storage).await?;
-            data.workers = crate::tasks::workers(state).await?;
+            if scope.is_none() && !apps_only {
+                data.tasks = crate::tasks::list(storage).await?;
+                data.workers = crate::tasks::workers(state).await?;
+            }
         } else {
             for file in &files {
                 data.files.push(file_value(file, &[]));
@@ -153,20 +197,27 @@ impl GraphData {
             {
                 if let Some(title) = data.titles.iter_mut().find(|t| t["titleId"] == id) {
                     for (key, value) in record {
-                        if !value.is_null() {
+                        if !value.is_null() && (row["source"] != "extract" || title[&key].is_null())
+                        {
                             title[key] = value;
                         }
                     }
-                    title["source"] = row["source"].clone();
+                    if row["source"] != "extract" {
+                        title["source"] = row["source"].clone();
+                    }
                 } else {
                     let mut title = Value::Object(record);
                     title["titleId"] = id.into();
-                    title["source"] = row["source"].clone();
+                    if row["source"] != "extract" {
+                        title["source"] = row["source"].clone();
+                    }
                     data.titles.push(title);
                 }
             }
         }
+        let local_media_enabled = state.settings.read().await.local_media.enabled;
         for title in &mut data.titles {
+            title["_localMediaEnabled"] = json!(local_media_enabled);
             title["_catalogue"] = json!(true);
         }
         let tracked = if state.storage.is_some() { &stored_titles } else { &data.apps }
@@ -209,7 +260,9 @@ impl GraphData {
                 links.get(app["id"].as_str().unwrap_or_default()).cloned().unwrap_or_default()
             );
         }
-        hydrate_downloads(&mut data);
+        let prefer_multicontent =
+            state.settings.read().await.library.management.deduplication.prefer_multicontent;
+        hydrate_downloads(&mut data, prefer_multicontent);
         for title in &mut data.titles {
             let id = title["titleId"].as_str().unwrap_or_default();
             let apps = data.apps.iter().filter(|a| a["titleId"] == id).collect::<Vec<_>>();
@@ -256,6 +309,13 @@ impl GraphData {
                         .ok()
                         .filter(Value::is_array)
                         .unwrap_or(Value::Null);
+                }
+            }
+        }
+        if let Some(storage) = &state.storage {
+            if hydrate_media {
+                for title in &mut data.titles {
+                    crate::media::attach(storage, title).await?;
                 }
             }
         }
@@ -442,18 +502,23 @@ pub fn select(
             }
         }
         if let Some(search) = args["search"].as_str() {
-            let text = format!(
-                "{} {} {} {}",
-                title["name"].as_str().unwrap_or_default(),
-                row["titleId"].as_str().unwrap_or_default(),
-                row["appId"].as_str().unwrap_or_default(),
-                row["filename"].as_str().unwrap_or_default()
-            )
-            .to_lowercase();
-            if !text.contains(&search.to_lowercase()) {
+            let own_title = data.title(&row["appId"]);
+            let search = search.to_lowercase();
+            if ![
+                own_title["name"].as_str(),
+                title["name"].as_str(),
+                row["titleId"].as_str(),
+                row["appId"].as_str(),
+                row["filename"].as_str(),
+            ]
+            .into_iter()
+            .flatten()
+            .any(|text| text.to_lowercase().contains(&search))
+            {
                 return false;
             }
         }
+
         true
     });
     if grouped {
@@ -564,29 +629,14 @@ pub fn select(
 }
 
 /// Project installation links without exposing filesystem paths to shop clients.
-fn hydrate_downloads(data: &mut GraphData) {
+fn hydrate_downloads(data: &mut GraphData, prefer_multicontent: bool) {
     for app in &mut data.apps {
         let mut copies = data
             .files
             .iter()
             .filter(|file| app["_fileIds"].as_array().is_some_and(|ids| ids.contains(&file["id"])))
             .collect::<Vec<_>>();
-        copies.sort_by_key(|file| {
-            (
-                matches!(
-                    file["verificationStatus"].as_str(),
-                    Some("CORRUPT" | "SIGNATURE_FAILED" | "MODIFIED")
-                ),
-                file["multicontent"] == true,
-                file["identificationType"] != "cnmt",
-                verification_rank(file["verificationStatus"].as_str().unwrap_or("UNVERIFIED")),
-                file["compressed"] != true,
-                file["organized"] != true,
-                file["addedAt"].is_null(),
-                file["addedAt"].as_str().unwrap_or_default().to_string(),
-                file["id"].as_str().and_then(|id| id.parse::<u64>().ok()).unwrap_or(0),
-            )
-        });
+        copies.sort_by_key(|file| file_rank(file, prefer_multicontent));
         app["addedAt"] = copies
             .iter()
             .filter_map(|file| file["addedAt"].as_str())
@@ -617,6 +667,26 @@ fn hydrate_downloads(data: &mut GraphData) {
         app["latestOwnedVersion"] = latest.map_or(Value::Null, |other| json!({"version":other["appVersion"],"owned":true,"releaseDate":other["releaseDate"],"displayVersion":other["displayVersion"]}));
     }
 }
+/// Same total order for every download-copy field, matching Ownfoil 2.5.0.
+fn file_rank(
+    file: &Value,
+    prefer_multicontent: bool,
+) -> (bool, bool, bool, u8, bool, bool, bool, String, u64) {
+    (
+        matches!(
+            file["verificationStatus"].as_str(),
+            Some("CORRUPT" | "SIGNATURE_FAILED" | "MODIFIED")
+        ),
+        (file["multicontent"] == true) != prefer_multicontent,
+        file["identificationType"] != "cnmt",
+        verification_rank(file["verificationStatus"].as_str().unwrap_or("UNVERIFIED")),
+        file["compressed"] != true,
+        file["organized"] != true,
+        file["addedAt"].is_null(),
+        file["addedAt"].as_str().unwrap_or_default().to_string(),
+        file["id"].as_str().and_then(|id| id.parse::<u64>().ok()).unwrap_or(0),
+    )
+}
 fn verification_rank(status: &str) -> u8 {
     match status {
         "VALID" => 0,
@@ -632,6 +702,28 @@ fn verification_rank(status: &str) -> u8 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn copy_selection_keeps_url_size_extension_together_and_respects_preference() {
+        let single = json!({"id":"1","downloadToken":"single","size":10,"extension":"nsz","multicontent":false,"compressed":true,"identificationType":"cnmt","verificationStatus":"VALID"});
+        let bundle = json!({"id":"2","downloadToken":"bundle","size":30,"extension":"nsp","multicontent":true,"identificationType":"cnmt","verificationStatus":"VALID"});
+        for (prefer, token, size, extension) in
+            [(false, "single", 10, "nsz"), (true, "bundle", 30, "nsp")]
+        {
+            let mut data = GraphData {
+                apps: vec![json!({"id":"1","owned":true,"_fileIds":["1","2"]})],
+                files: vec![bundle.clone(), single.clone()],
+                ..GraphData::default()
+            };
+            hydrate_downloads(&mut data, prefer);
+            assert_eq!(data.apps[0]["downloadUrl"], format!("/api/download/{token}"));
+            assert_eq!(data.apps[0]["downloadSize"], size);
+            assert_eq!(data.apps[0]["downloadExtension"], extension);
+        }
+        let mut broken = bundle;
+        broken["verificationStatus"] = json!("CORRUPT");
+        assert!(file_rank(&single, true) < file_rank(&broken, true));
+    }
 
     fn app_rows() -> Vec<Value> {
         vec![
@@ -813,6 +905,75 @@ mod tests {
             );
             assert_eq!(ids(&rows, "id"), expected);
         }
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)]
+    async fn sql_app_pages_preserve_grouping_search_and_scoped_relationships() -> anyhow::Result<()>
+    {
+        use std::sync::Arc;
+        use tokio::sync::RwLock;
+        let dir = tempfile::tempdir()?;
+        let storage = crate::storage::Storage::open(dir.path().join("sql.db")).await?;
+        storage.with_connection(|conn| {
+            conn.execute_batch("INSERT INTO titles(id,title_id,have_base,up_to_date,complete) VALUES (1,'0100000000001000',1,0,1),(2,'0100000000002000',1,1,0);
+                INSERT INTO apps(id,title_id,app_id,app_version,app_type,owned) VALUES (1,1,'0100000000001000','0','BASE',1),(2,1,'0100000000001800','65536','UPDATE',1),(3,1,'0100000000001800','131072','UPDATE',0),(4,1,'0100000000001001','0','DLC',1),(5,2,'0100000000002000','0','BASE',1);")?;
+            conn.execute("INSERT INTO title_overrides(title_id,record) VALUES (?1,?2)",rusqlite::params!["0100000000001001",json!({"name":"Éclair Extra Levels"}).to_string()])?;
+            Ok(())
+        }).await?;
+        let (progress, _) = tokio::sync::broadcast::channel(1);
+        let state = AppState {
+            catalog: Arc::new(RwLock::new(crate::catalog::Catalog::from_files(Vec::new()))),
+            library_root: dir.path().to_path_buf(),
+            storage: Some(storage),
+            scan_lock: Arc::new(tokio::sync::Mutex::new(())),
+            settings: Arc::new(RwLock::new(crate::settings::Settings::default())),
+            settings_path: dir.path().join("settings.yaml"),
+            keys_path: dir.path().join("keys.txt"),
+            auth: Arc::new(crate::auth::AuthSettings::from_users(Vec::new())),
+            shop: Arc::new(RwLock::new(crate::shop::ShopConfig::default())),
+            insecure_admin_cookie: false,
+            sessions: super::super::state::SessionStore::new(24),
+            titledb: crate::titledb::TitleDb::new(
+                crate::config::TitleDbConfig { enabled: false, ..Default::default() },
+                dir.path().to_path_buf(),
+            ),
+            titles_cache: Arc::new(RwLock::new(None)),
+            data_dir: dir.path().to_path_buf(),
+            titledb_progress_tx: progress,
+        };
+        let data = GraphData::load_apps(&state, true).await?;
+        for args in [
+            json!({}),
+            json!({"groupByAppId":true}),
+            json!({"groupByAppId":true,"owned":true}),
+            json!({"groupByAppId":true,"owned":false}),
+            json!({"groupByAppId":true,"owned":true,"filter":{"owned":false}}),
+            json!({"groupByAppId":true,"filter":{"appVersion":{"lte":65536}}}),
+            json!({"complete":true}),
+            json!({"upToDate":false}),
+            json!({"appType":["DLC"],"search":"éCLAIR"}),
+            json!({"search":"' OR 1=1 --"}),
+            json!({"orderBy":{"field":"VERSION","direction":"DESC"},"pageSize":2,"page":2}),
+        ] {
+            let sql = GraphData::app_page(&state, true, &args).await?;
+            let memory = select(data.apps.clone(), &args, "App", &data, true);
+            assert_eq!(sql["total"], memory["total"], "{args}");
+            assert_eq!(ids(&sql["items"], "id"), ids(&memory["items"], "id"), "{args}");
+        }
+        let page =
+            GraphData::app_page(&state, true, &json!({"appType":["DLC"],"pageSize":1})).await?;
+        assert_eq!(page["items"][0]["_titledb"]["name"], "Éclair Extra Levels");
+        assert_eq!(page["items"][0]["_title"]["titleId"], "0100000000001000");
+        let update = GraphData::app_page(
+            &state,
+            false,
+            &json!({"groupByAppId":true,"owned":true,"appType":["UPDATE"]}),
+        )
+        .await?;
+        assert_eq!(update["items"][0]["appVersion"], 65536);
+        assert_eq!(update["items"][0]["latestOwnedVersion"]["version"], 65536);
+        Ok(())
     }
 
     #[tokio::test]

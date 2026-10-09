@@ -23,6 +23,7 @@ mod discovery;
 mod http;
 mod identifier;
 mod keys;
+mod media;
 mod organizer;
 mod scanner;
 mod serve_files;
@@ -122,9 +123,10 @@ async fn main() -> anyhow::Result<()> {
     };
 
     if let Some(storage) = &state.storage {
-        for (id, record) in storage.title_override_records().await? {
+        for (id, record) in storage.custom_title_records().await? {
             state.titledb.set_override(&id, Some(&record)).await?;
         }
+        state.titledb.set_extracted_overrides(storage.extracted_title_records().await?).await?;
     }
     crate::content::recover(&state).await?;
     let current = state.settings.read().await.clone();

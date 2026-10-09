@@ -1,0 +1,101 @@
+{
+  "architecture": "aarch64",
+  "baseline": "current branch; no pre-change or Python comparison",
+  "cases": [
+    {
+      "first_us": 38793,
+      "hydrated_counts": {
+        "apps": 40,
+        "files": 0,
+        "titles": 40
+      },
+      "library_titles": 100,
+      "provider_sync_and_first_scope_us": 37425,
+      "query": "all_NAME",
+      "returned_apps": 40,
+      "samples": 20,
+      "warm_p50_us": 37320,
+      "warm_p95_us": 77404
+    },
+    {
+      "first_us": 45068,
+      "hydrated_counts": {
+        "apps": 40,
+        "files": 0,
+        "titles": 40
+      },
+      "library_titles": 100,
+      "provider_sync_and_first_scope_us": 37425,
+      "query": "all_ADDED_AT",
+      "returned_apps": 40,
+      "samples": 20,
+      "warm_p50_us": 32825,
+      "warm_p95_us": 37322
+    },
+    {
+      "first_us": 32524,
+      "hydrated_counts": {
+        "apps": 40,
+        "files": 0,
+        "titles": 40
+      },
+      "library_titles": 100,
+      "provider_sync_and_first_scope_us": 37425,
+      "query": "all_RELEASE_DATE",
+      "returned_apps": 40,
+      "samples": 20,
+      "warm_p50_us": 33147,
+      "warm_p95_us": 34222
+    },
+    {
+      "first_us": 159874,
+      "hydrated_counts": {
+        "apps": 40,
+        "files": 0,
+        "titles": 40
+      },
+      "library_titles": 10000,
+      "provider_sync_and_first_scope_us": 309201,
+      "query": "all_NAME",
+      "returned_apps": 40,
+      "samples": 20,
+      "warm_p50_us": 160020,
+      "warm_p95_us": 161587
+    },
+    {
+      "first_us": 152343,
+      "hydrated_counts": {
+        "apps": 40,
+        "files": 0,
+        "titles": 40
+      },
+      "library_titles": 10000,
+      "provider_sync_and_first_scope_us": 309201,
+      "query": "all_ADDED_AT",
+      "returned_apps": 40,
+      "samples": 20,
+      "warm_p50_us": 155049,
+      "warm_p95_us": 199083
+    },
+    {
+      "first_us": 153732,
+      "hydrated_counts": {
+        "apps": 40,
+        "files": 0,
+        "titles": 40
+      },
+      "library_titles": 10000,
+      "provider_sync_and_first_scope_us": 309201,
+      "query": "all_RELEASE_DATE",
+      "returned_apps": 40,
+      "samples": 20,
+      "warm_p50_us": 154274,
+      "warm_p95_us": 156010
+    }
+  ],
+  "mode": "Rust debug build, in-process Axum test transport, sequential requests",
+  "os": "macos",
+  "warm_p95_budget_us": 500000,
+  "date": "2026-10-09",
+  "toolchain": "1.98.0"
+}

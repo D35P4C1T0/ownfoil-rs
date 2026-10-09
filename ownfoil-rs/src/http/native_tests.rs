@@ -293,7 +293,7 @@ mod native_tests {
             response["data"]["title"]["banner"]["url"].as_str().context("Missing artwork")?;
         let image = server.get(image_url).await;
         image.assert_status_ok();
-        assert_eq!(image.header("content-type"), "image/jpeg");
+        assert_eq!(image.header("content-type"), "image/png");
         let decoded = image::load_from_memory(image.as_bytes())?;
         assert_eq!((decoded.width(), decoded.height()), (320, 180));
         drop(upstream);

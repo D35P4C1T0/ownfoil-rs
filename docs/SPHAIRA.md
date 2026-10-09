@@ -36,17 +36,21 @@ existing reverse proxy configuration.
 
 ## Catalog and installation
 
-Game names and artwork require populated TitleDB metadata. The default source
+Game names and artwork use populated TitleDB metadata or metadata extracted from
+Control NCA/NACP content. Sparse custom overrides take precedence over TitleDB,
+then extracted fields fill gaps, matching Ownfoil 2.5.0. The default source
 is `https://github.com/a1ex4/ownfoil/releases/download/titledb`, whose
 `titles.<region>.<language>.json.zst` assets include regional fallback titles.
 When configuring a `[titledb]` section explicitly, set `enabled = true` and
 `url_override` to that release base URL to use the consolidated metadata.
-Legacy ZIP source overrides remain supported. Icons are downloaded and cached
-on first access; reconnect the client after refreshing metadata.
+Legacy ZIP source overrides remain supported. Artwork can be prepared by durable `download_media` and `download_title_media`
+tasks (`local_media.enabled` defaults to true); first-access fetching remains a
+fallback. Extracted icons use the same local media store without external access.
 
-App-only GraphQL requests load metadata for the library's app and parent title
-IDs through indexed SQLite lookups. Global title searches and statistics retain
-the complete catalog. On the local dev server with 44 base games and 63,323
+Owned grouped app-only queries push filtering, ownership, grouping, search,
+sorting, totals, and pagination into SQL and hydrate the returned page. Other
+GraphQL shapes retain the existing projection. Global title searches and
+statistics retain the complete catalog. On the local dev server with 44 base games and 63,323
 TitleDB entries, Sphaira's first-page query dropped from 19.4–19.7 seconds to
 0.10–0.14 seconds. These timings cover the API response; initial artwork downloads
 and console rendering take additional time.
@@ -54,10 +58,11 @@ and console rendering take additional time.
 The GraphQL API accepts the released client's catalog, search, update pre-pass,
 and aliased title-details queries. This includes `StringFilter.notIn`, image
 size arguments, app display versions, latest owned versions, added-time sorting,
-and download URL/extension/size fields. Display versions are nullable; the new
-column stores supplied/imported metadata but this change does not add Control
-NCA/NACP extraction. Existing CNMT identification continues to determine the
-contents carried by each file.
+and download URL/extension/size fields. Display versions are nullable and persist supplied/imported or extracted NACP
+values. CNMT identification determines each file's contents; the file pipeline
+also extracts localized name, publisher, display version, and icon from matching
+Control NCAs. Missing keys and malformed content retain identification fallbacks.
+Extraction state is persisted and invalidated when file, keys, or locale changes.
 
 Grouped `owned:true` queries return the newest **owned** version. An unavailable
 newer version in TitleDB cannot replace its installation link. Nested base,
@@ -68,8 +73,11 @@ selected container, including NSP, NSZ, XCI, and XCZ, through existing Range sup
 Download links use random, durable per-file tokens and still require shop access.
 Tokens survive rescans, organization, and restarts. Links follow each file's own
 library root. When copies exist, selection prefers intact verification results,
-single-content files, CNMT identification, better verification, compression,
-organization, then stable added-time/id ordering. Legacy path and numeric download
+the configured bundle preference, CNMT identification, better verification,
+compression, organization, then stable added-time/id ordering. Set
+`library.management.deduplication.prefer_multicontent` to true to favor bundles;
+the upstream-compatible default is false. Size, extension, and URL use the same
+chosen copy. Legacy path and numeric download
 endpoints remain available for existing clients.
 
 Public shops allow anonymous GraphQL catalog queries. Their anonymous callers
@@ -78,14 +86,18 @@ require authenticated shop access; existing administrator-only permissions remai
 
 ## Artwork
 
-The API returns local `Image` URLs for icons, banners, and screenshots. The server
-fetches artwork on demand, caches source bytes, and creates JPEG renditions without
+The API returns local `Image` URLs for icons, banners, and screenshots. The persistent media store accepts extracted icons and remote downloads, records
+original dimensions, and creates JPEG renditions without
 enlarging small originals. THUMB, CLIENT, and SCREEN use the upstream bounding
 boxes, preserving aspect ratios. Source downloads and image decoding are bounded.
 Cached artwork supports conditional requests and requires shop access even when
-already stored. GraphQL image width/height remain null because dimensions are not
-recorded in the catalog. Upstream's background artwork ingestion, extracted icons,
-and media collection are outside this client integration change.
+already stored. GraphQL image width/height are returned for stored artwork and each fitted
+rendition. Background ingestion shares the HTTP cache, with bounded transfers,
+retryable failures, task cancellation, and reference-aware collection with a
+one-hour grace period. Usage is available at `/api/settings/local_media/usage`.
+Existing first-access cache URLs remain supported. JPEG compression bytes may
+differ from Pillow: dimension/quality/chroma behavior, not byte identity, is the
+compatibility target.
 
 ## Verification
 
@@ -97,10 +109,24 @@ public/private access, real UDP discovery, and artwork fetching/resizing/caching
 through a local HTTP fixture. Older GraphQL parity expectations are retained,
 with an explicit adjustment for the new owned-grouping behavior.
 
-Run the workspace tests and strict CI Clippy command with Rust 1.97 or newer.
-Physical Switch testing remains required to confirm the complete device workflow;
+Run the workspace tests and strict CI Clippy command with Rust 1.98.0.
+Earlier native discovery and browsing were tested on Switch; physical testing of
+the new parity features and console installation remains required to confirm the
+complete device workflow;
 these tests validate the server protocol and do not perform a console installation.
 
-Validated on 2026-10-09 with Rust 1.98.0: **138 tests passed**, with three existing
-optional archive/zstd tests ignored. Strict CI Clippy, formatting, diff whitespace
-checks, and the merged Compose discovery configuration passed.
+The pre-parity integration was validated on 2026-10-09 with Rust 1.98.0: 138 tests
+passed, with three optional archive/zstd tests ignored. The parity implementation
+adds a separate 68-response comparison captured from Ownfoil 2.5.0, including
+both duplicate preferences and sparse metadata precedence, plus upstream
+rendition geometry/default checks. See [validation](../VALIDATION.md) for the
+current run and pending hardware/benchmark gates; the historical timings above
+do not compare Python against Rust.
+
+Current parity suite: 151 unit/integration tests and eight route-contract tests
+passed (159 total), with four optional tests ignored. The local ignored scaling
+benchmark was also run successfully: 100/10,000-title datasets, three client sort
+queries, 20 warm samples each, 40 returned and hydrated apps.
+See [the raw scaling record](SPHAIRA_SCALING_2026-10-09.json). It uses a debug
+build and in-process Axum test transport and establishes a local regression
+budget, not comparative performance superiority.

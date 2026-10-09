@@ -1674,4 +1674,5 @@ mod tests {
         }
     }
     include!("native_tests.rs");
+    include!("sphaira_parity_tests.rs");
 }

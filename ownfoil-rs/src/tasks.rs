@@ -3,9 +3,14 @@ use crate::{http::AppState, storage::Storage};
 use anyhow::{Context, bail};
 use rusqlite::{OptionalExtension, params};
 use serde_json::{Value, json};
+use sha2::Digest;
 
 pub const NAMES: &[&str] = &[
     "startup",
+    "download_media",
+    "download_media_for_title",
+    "download_title_media",
+    "media_cleanup",
     "add_file",
     "remove_library",
     "handle_file_added",
@@ -504,8 +509,17 @@ async fn execute(state: &AppState, id: i64, name: &str, input: Value) -> anyhow:
         "process_library" => {
             let management = state.settings.read().await.library.management.clone();
             let keys = crate::keys::inspect(&state.keys_path).valid_keys == Some(true);
+            let locale = state.settings.read().await.titles.clone();
             for file in selected_files(storage, &scope).await? {
-                if file.needs_processing(&management, keys) {
+                let extraction_pending = match extraction_fingerprint(
+                    &file.root.join(&file.path),
+                    &state.keys_path,
+                    &locale,
+                ) {
+                    Ok(fingerprint) => storage.extraction_needed(file.id, &fingerprint).await?,
+                    Err(_) => true,
+                };
+                if file.needs_processing(&management, keys) || extraction_pending {
                     child(storage, id, "process_file", json!({"file_id":file.id})).await?;
                 }
             }
@@ -560,6 +574,52 @@ async fn execute(state: &AppState, id: i64, name: &str, input: Value) -> anyhow:
                 scope["title_id"].as_str().context("title_id is required")?;
             }
             update_title_flags(storage, &scope).await?;
+            if state.settings.read().await.local_media.enabled {
+                let name = if scope["title_id"].is_string() {
+                    "download_media_for_title"
+                } else {
+                    "download_media"
+                };
+                child(storage, id, name, scope.clone()).await?;
+                wait_for_children(storage, id).await?;
+            }
+        }
+        "download_media" => {
+            if state.settings.read().await.local_media.enabled {
+                let titles = storage.with_connection(|conn| {
+                    let mut stmt = conn.prepare("SELECT title_id FROM titles UNION SELECT app_id FROM apps WHERE app_type='DLC' ORDER BY 1")?;
+                    let rows = stmt.query_map([],|r|r.get::<_,String>(0))?.collect::<Result<Vec<_>,_>>()?;
+                    Ok(rows)
+                }).await?;
+                for title in titles {
+                    if cancelled(storage, id).await {
+                        bail!("Task cancelled")
+                    }
+                    child(storage, id, "download_media_for_title", json!({"title_id":title}))
+                        .await?;
+                }
+                wait_for_children(storage, id).await?;
+            }
+        }
+        "download_media_for_title" | "download_title_media" => {
+            if state.settings.read().await.local_media.enabled {
+                if let Err(error) = download_title_artwork(state, storage, id, &input).await {
+                    let attempt = input["attempt"].as_u64().unwrap_or(0);
+                    if attempt >= 3 {
+                        return Err(error);
+                    }
+                    let mut retry = input.clone();
+                    retry["attempt"] = json!(attempt + 1);
+                    let delay = format!("+{} seconds", 30 * (1u64 << attempt));
+                    storage.with_connection(move |conn| {
+                        conn.execute("UPDATE tasks SET status='pending',worker_id=NULL,input_json=?2,run_after=strftime('%Y-%m-%dT%H:%M:%fZ','now',?3),error_message=?4 WHERE id=?1 AND status='running' AND cancel_requested=0",params![id,retry.to_string(),delay,error.to_string()])?;
+                        Ok(())
+                    }).await?;
+                }
+            }
+        }
+        "media_cleanup" => {
+            return crate::media::collect(state).await;
         }
         "remove_missing_files" | "remove_outdated_updates" | "library_maintenance" => {
             maintain(state, storage, id, name, &scope).await?;
@@ -569,6 +629,7 @@ async fn execute(state: &AppState, id: i64, name: &str, input: Value) -> anyhow:
         }
         _ => bail!("Unknown task: {name}"),
     }
+    state.titledb.set_extracted_overrides(storage.extracted_title_records().await?).await?;
     *state.titles_cache.write().await = None;
     Ok(json!({"success":true}))
 }
@@ -788,6 +849,7 @@ async fn publish_file(state: &AppState, file: Option<crate::catalog::ContentFile
     *catalog = crate::catalog::Catalog::from_files(files);
 }
 
+#[allow(clippy::too_many_lines)]
 async fn process_file(
     state: &AppState,
     storage: &Storage,
@@ -797,6 +859,7 @@ async fn process_file(
     let path = pending.root.join(&pending.path);
     if !path.try_exists()? {
         storage.delete_file(pending.id).await?;
+        state.titledb.set_extracted_overrides(storage.extracted_title_records().await?).await?;
         publish_file(state, None, pending.id).await;
         update_title_flags(storage, &json!({})).await?;
         return Ok(());
@@ -820,21 +883,124 @@ async fn process_file(
             file.kind = primary.kind;
         }
     }
-    let mut file = crate::identifier::identify_files(&pending.root, vec![file], &state.keys_path)
+    let locale = state.settings.read().await.titles.clone();
+    let fingerprint = extraction_fingerprint(&path, &state.keys_path, &locale)?;
+    let needs_extraction = storage.extraction_needed(pending.id, &fingerprint).await?;
+    let mut extracted = Vec::new();
+    let mut extraction_error = None;
+    let mut file = if needs_extraction {
+        match crate::identifier::read_container_metadata(
+            &path,
+            &state.keys_path,
+            &locale.region,
+            &locale.language,
+        )
         .await
-        .into_iter()
-        .next()
-        .context("Missing identified file")?;
+        {
+            Ok(result) => {
+                if let Some(primary) = result.contents.first() {
+                    file.title_id = Some(primary.app_id.clone());
+                    file.version = Some(primary.version);
+                    file.kind = primary.kind;
+                }
+                file.identified_contents = result.contents;
+                extracted = result.metadata;
+                file
+            }
+            Err(error) => {
+                extraction_error = Some(error);
+                crate::identifier::identify_files(&pending.root, vec![file], &state.keys_path)
+                    .await
+                    .into_iter()
+                    .next()
+                    .context("Missing identified file")?
+            }
+        }
+    } else {
+        crate::identifier::identify_files(&pending.root, vec![file], &state.keys_path)
+            .await
+            .into_iter()
+            .next()
+            .context("Missing identified file")?
+    };
     if cancelled(storage, task).await {
         bail!("Task cancelled");
     }
     file.id = usize::try_from(persist_file(storage, file.clone(), Some(pending.id)).await?)?;
+    if needs_extraction {
+        let mut sources = Vec::new();
+        for metadata in extracted {
+            let mut record = metadata.record;
+            if let Some(icon) = metadata.icon {
+                let identity = format!(
+                    "extract:{}",
+                    crate::media::source_hash(&hex::encode(sha2::Sha256::digest(&icon)))
+                );
+                match crate::media::ingest(state, &metadata.title_id, "icon", 0, &identity, &icon)
+                    .await
+                {
+                    Ok(slot) => {
+                        record.insert(
+                            "iconUrl".into(),
+                            json!(format!(
+                                "/api/media/{}/icon/0/original/{}",
+                                metadata.title_id,
+                                slot["filename"].as_str().unwrap_or_default()
+                            )),
+                        );
+                    }
+                    Err(error) => {
+                        tracing::warn!(%error,"Extracted icon could not be stored");
+                    }
+                }
+            }
+            sources.push(crate::storage::StoredExtraction {
+                title_id: metadata.title_id,
+                app_id: metadata.app_id,
+                version: metadata.version,
+                record,
+                display_version: metadata.display_version,
+                language: metadata.language,
+                icon_language: metadata.icon_language,
+            });
+        }
+        storage
+            .store_extraction(
+                pending.id,
+                &fingerprint,
+                &format!("{}/{}", locale.region, locale.language),
+                sources,
+                extraction_error,
+            )
+            .await?;
+        state.titledb.set_extracted_overrides(storage.extracted_title_records().await?).await?;
+        *state.titles_cache.write().await = None;
+    }
     let mut management = state.settings.read().await.library.management.clone();
     management.delete_older_updates = false;
     management.organizer.remove_empty_folders = false;
     if management.organizer.enabled {
+        let mut organizer_file = file.clone();
+        if let Some(title_id) = file
+            .identified_contents
+            .first()
+            .map(|identity| identity.title_id.as_str())
+            .or(file.title_id.as_deref())
+        {
+            if let Some(info) = state.titledb.lookup(title_id).await {
+                if let Some(name) = info.name.filter(|name| !name.is_empty()) {
+                    organizer_file.name = format!(
+                        "{name} [{}].{}",
+                        title_id,
+                        file.name.rsplit('.').next().unwrap_or("nsp")
+                    );
+                }
+            }
+        }
         if let Some(target) =
-            crate::organizer::preview(std::slice::from_ref(&file), &management).into_iter().next()
+            crate::organizer::preview(std::slice::from_ref(&organizer_file), &management)
+                .into_iter()
+                .next()
         {
             let destination = pending.root.join(&target.destination);
             if pending.root.join(".ownfoil-organizer-journal.json").symlink_metadata().is_ok() {
@@ -871,10 +1037,20 @@ async fn process_file(
             })
             .await?;
     }
-    publish_file(state, Some(file), pending.id).await;
+    publish_file(state, Some(file.clone()), pending.id).await;
     let scope = json!({"file_id":pending.id});
     sync_known_apps(state, storage, &scope).await?;
     update_title_flags(storage, &scope).await?;
+    if state.settings.read().await.local_media.enabled {
+        for identity in &file.identified_contents {
+            let title = if identity.kind == crate::catalog::ContentKind::Dlc {
+                &identity.app_id
+            } else {
+                &identity.title_id
+            };
+            enqueue(storage, "download_media_for_title", json!({"title_id":title})).await?;
+        }
+    }
     let current = selected_files(storage, &scope)
         .await?
         .into_iter()
@@ -1181,6 +1357,89 @@ pub async fn schedule_titledb(
     Ok(())
 }
 
+async fn download_title_artwork(
+    state: &AppState,
+    storage: &Storage,
+    task: i64,
+    input: &Value,
+) -> anyhow::Result<()> {
+    let title = input["title_id"].as_str().context("title_id is required")?;
+    let Some(info) = state.titledb.lookup(title).await else { return Ok(()) };
+    let mut record = Value::Object(info.record);
+    record["iconUrl"] = json!(info.icon_url);
+    record["bannerUrl"] = json!(info.banner_url);
+    if let Some(raw) = record["screenshots"].as_str() {
+        record["screenshots"] = serde_json::from_str(raw).unwrap_or(Value::Null);
+    }
+    let mut slots = Vec::new();
+    for kind in crate::media::KINDS {
+        let count = if *kind == "screenshot" {
+            record["screenshots"].as_array().map_or(0, Vec::len)
+        } else {
+            1
+        };
+        for position in 0..count {
+            if let Some(url) = crate::media::source(&record, kind, position) {
+                slots.push((*kind, position, url.to_string()));
+            }
+        }
+    }
+    let desired: Vec<Value> = slots.iter().map(|(kind,position,url)| json!({"kind":kind,"position":position,"filename":if url.starts_with("/api/media/"){url.rsplit('/').next().unwrap_or_default().to_string()}else{format!("{}.jpg",crate::media::source_hash(url))}})).collect();
+    let total = slots.len().max(1);
+    let mut failed = None;
+    for (index, (kind, position, url)) in slots.into_iter().enumerate() {
+        if cancelled(storage, task).await {
+            bail!("Task cancelled")
+        }
+        if let Err(error) = crate::media::download(state, title, kind, position, &url).await {
+            tracing::warn!(%error,kind,title,"Artwork download failed; retaining existing media");
+            failed = Some(error);
+        }
+        let progress = i64::try_from((index + 1) * 100 / total).unwrap_or(100);
+        storage
+            .with_connection(move |conn| {
+                conn.execute(
+                    "UPDATE tasks SET completion_pct=?2 WHERE id=?1 AND status='running'",
+                    params![task, progress],
+                )?;
+                Ok(())
+            })
+            .await?;
+    }
+    if cancelled(storage, task).await {
+        bail!("Task cancelled")
+    }
+    if let Some(error) = failed {
+        return Err(error);
+    }
+    crate::media::initialize(storage).await?;
+    let title = title.to_ascii_uppercase();
+    let desired = json!(desired).to_string();
+    storage.with_connection(move |conn| {
+        conn.execute("DELETE FROM media_slots WHERE title_id=?1 AND NOT EXISTS(SELECT 1 FROM json_each(?2) slot WHERE json_extract(slot.value,'$.kind')=media_slots.kind AND json_extract(slot.value,'$.position')=media_slots.position AND json_extract(slot.value,'$.filename')=media_slots.filename)",params![title,desired])?;
+        Ok(())
+    }).await?;
+    Ok(())
+}
+
+fn extraction_fingerprint(
+    path: &std::path::Path,
+    keys: &std::path::Path,
+    locale: &crate::settings::TitleSettings,
+) -> anyhow::Result<String> {
+    let info = path.metadata()?;
+    let modified =
+        info.modified()?.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos();
+    let key_bytes = std::fs::read(keys).unwrap_or_default();
+    Ok(format!(
+        "{}:{modified}:{}:{}/{}",
+        info.len(),
+        hex::encode(sha2::Sha256::digest(key_bytes)),
+        locale.region,
+        locale.language
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1233,6 +1492,133 @@ mod tests {
             display_name("library_maintenance", &json!({"library_path":"/games"}), None),
             "Maintain /games"
         );
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn media_ingestion_persists_dimensions_and_serves_offline_retained_sources()
+    -> anyhow::Result<()> {
+        use image::GenericImageView;
+        let (_dir, state) = test_state().await?;
+        let storage = state.storage.as_ref().context("missing storage")?;
+        storage
+            .with_connection(|conn| {
+                conn.execute("INSERT INTO titles(title_id) VALUES('0100000000000000')", [])?;
+                Ok(())
+            })
+            .await?;
+        let image = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+            512,
+            256,
+            image::Rgba([10, 20, 30, 128]),
+        ));
+        let mut bytes = Vec::new();
+        image.write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png)?;
+        let slot = crate::media::ingest(
+            &state,
+            "0100000000000000",
+            "icon",
+            0,
+            "https://offline.invalid/icon",
+            &bytes,
+        )
+        .await?;
+        let filename = slot["filename"].as_str().context("filename")?;
+        let root = state.data_dir.join("media/icon");
+        assert_eq!(std::fs::read(root.join("original").join(filename))?, bytes);
+        let thumb = image::load_from_memory(&std::fs::read(root.join("thumb").join(filename))?)?;
+        assert_eq!(thumb.dimensions(), (176, 88));
+        assert!(thumb.color().has_alpha());
+        let mut title =
+            json!({"titleId":"0100000000000000","iconUrl":"https://offline.invalid/icon"});
+        crate::media::attach(storage, &mut title).await?;
+        let slot = &title["_media"][0];
+        assert_eq!(slot["width"], 512);
+        assert_eq!(slot["height"], 256);
+        assert_eq!(crate::media::fit(512, 256, "icon", "client"), (256, 128));
+        // Reuse cached originals without any external network request.
+        crate::media::download(
+            &state,
+            "0100000000000000",
+            "icon",
+            0,
+            "https://offline.invalid/icon",
+        )
+        .await?;
+        let broken =
+            crate::media::ingest(&state, "0100000000000000", "icon", 0, "broken", b"invalid image")
+                .await;
+        assert!(broken.is_err());
+        let mut retained =
+            json!({"titleId":"0100000000000000","iconUrl":"https://offline.invalid/icon"});
+        crate::media::attach(storage, &mut retained).await?;
+        assert_eq!(retained["_media"][0]["source"], "https://offline.invalid/icon");
+        assert_eq!(crate::media::collect(&state).await?["removed"], 0);
+        assert_eq!(crate::media::usage(&state).await?["icon"]["thumb"]["files"], 1);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn media_cleanup_retains_custom_references_and_reclaims_only_old_unreferenced_files()
+    -> anyhow::Result<()> {
+        let (_dir, state) = test_state().await?;
+        let storage = state.storage.as_ref().context("missing storage")?;
+        let root = state.data_dir.join("media/icon/original");
+        std::fs::create_dir_all(&root)?;
+        let kept = "a".repeat(64) + ".jpg";
+        let orphan = "b".repeat(64) + ".jpg";
+        for name in [&kept, &orphan, "new.tmp"] {
+            std::fs::write(root.join(name), b"bytes")?;
+        }
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(7200);
+        for name in [&kept, &orphan] {
+            std::fs::File::open(root.join(name))?.set_modified(old)?;
+        }
+        let custom =
+            json!({"iconUrl":format!("/api/media/0100000000000000/icon/0/original/{kept}")})
+                .to_string();
+        storage
+            .with_connection(move |conn| {
+                conn.execute(
+                    "INSERT INTO title_overrides(title_id,record) VALUES('0100000000000000',?1)",
+                    [custom],
+                )?;
+                Ok(())
+            })
+            .await?;
+        assert_eq!(crate::media::collect(&state).await?["removed"], 1);
+        assert!(root.join(kept).is_file());
+        assert!(!root.join(orphan).exists());
+        assert!(root.join("new.tmp").is_file());
+        assert!(state.library_root.is_dir());
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn media_failures_delay_retry_and_pending_cancellation_stops_followup()
+    -> anyhow::Result<()> {
+        let (_dir, state) = test_state().await?;
+        let storage = state.storage.as_ref().context("missing storage")?;
+        state
+            .titledb
+            .set_override(
+                "0100000000000000",
+                Some(&json!({"iconUrl":"http://127.0.0.1:9/missing"})),
+            )
+            .await?;
+        let input = json!({"title_id":"0100000000000000"});
+        let id = run_task(&state, "download_media_for_title", input.clone()).await?;
+        let task = get(storage, id).await?.context("missing task")?;
+        assert_eq!(task["status"], "PENDING");
+        assert!(task["runAfter"].as_str().is_some());
+        assert_eq!(
+            serde_json::from_str::<Value>(task["input"].as_str().context("input")?)?["attempt"],
+            1
+        );
+        assert!(cancel(storage, id).await?);
+        assert!(get(storage, id).await?.is_none());
+        let retry = json!({"title_id":"0100000000000000","attempt":3});
+        assert!(run_task(&state, "download_media_for_title", retry).await.is_err());
         Ok(())
     }
 
@@ -1419,7 +1805,16 @@ mod tests {
             child_rows(storage, parent).await?,
             vec![("update_titles_for_title".into(), "pending".into())]
         );
-        assert_eq!(drain(&state).await?, 1);
+        assert_eq!(drain(&state).await?, 2);
+        let media_scope = list(storage)
+            .await?
+            .into_iter()
+            .find(|task| task["taskName"] == "download_media_for_title")
+            .context("missing per-title media task")?;
+        assert_eq!(
+            serde_json::from_str::<Value>(media_scope["input"].as_str().context("input")?)?["title_id"],
+            "0100000000000000"
+        );
         storage.with_connection(|conn| {
             let rows: (i64,i64) = conn.query_row("SELECT (SELECT COUNT(*) FROM apps),(SELECT up_to_date FROM titles WHERE title_id='0100000000010000')",[],|r|Ok((r.get(0)?,r.get(1)?)))?;
             assert_eq!(rows,(1,0));
@@ -1445,7 +1840,8 @@ mod tests {
         let parent =
             run_task(&state, "process_library", json!({"library_path":state.library_root})).await?;
         assert_eq!(child_rows(storage, parent).await?, Vec::<(String, String)>::new());
-        assert_eq!(drain(&state).await?, 2);
+        assert_eq!(drain(&state).await?, 4);
+        assert!(list(storage).await?.iter().any(|task| task["taskName"] == "download_media"));
         let file = selected_files(storage, &json!({})).await?.remove(0);
         let file_id = file.id;
         storage
@@ -1459,7 +1855,7 @@ mod tests {
             child_rows(storage, parent).await?,
             vec![("process_file".into(), "pending".into())]
         );
-        assert_eq!(drain(&state).await?, 3);
+        assert_eq!(drain(&state).await?, 5);
         Ok(())
     }
 

@@ -28,6 +28,7 @@ struct Context {
     state: AppState,
     data: GraphData,
     can_shop: bool,
+    sql_apps: bool,
 }
 static SCHEMA: LazyLock<Schema> = LazyLock::new(|| {
     build_schema().unwrap_or_else(|error| panic!("Invalid GraphQL contract: {error}"))
@@ -106,7 +107,7 @@ fn build_schema() -> anyhow::Result<Schema> {
                         let field_type = field_type.clone();
                         FieldFuture::new(async move {
                             let context = ctx.data::<Context>()?;
-                            let args = Value::Object(
+                            let mut args = Value::Object(
                                 ctx.args
                                     .iter()
                                     .map(|(key, value)| {
@@ -114,6 +115,24 @@ fn build_schema() -> anyhow::Result<Schema> {
                                     })
                                     .collect::<async_graphql::Result<_>>()?,
                             );
+                            if owner == "Query" && matches!(property.as_str(), "apps" | "app") {
+                                let root = ctx.look_ahead();
+                                let items =
+                                    if property == "apps" { root.field("items") } else { root };
+                                args["_wantItems"] = json!(property == "app" || items.exists());
+                                args["_wantFiles"] = json!(items.field("files").exists());
+                                args["_wantDownloads"] = json!(
+                                    ["downloadUrl", "downloadSize", "downloadExtension", "addedAt"]
+                                        .iter()
+                                        .any(|field| items.field(field).exists())
+                                );
+                                args["_wantMedia"] =
+                                    json!(["title", "titledb"].iter().any(|parent| {
+                                        ["icon", "banner", "screenshots"]
+                                            .iter()
+                                            .any(|field| items.field(parent).field(field).exists())
+                                    }));
+                            }
                             let parent = ctx
                                 .parent_value
                                 .try_downcast_ref::<Value>()
@@ -184,6 +203,23 @@ async fn resolve(
                 }
                 _ => {}
             }
+        }
+        if ctx.sql_apps && matches!(field, "apps" | "app") {
+            let mut query_args = args.clone();
+            if field == "app" {
+                query_args["_id"] = args["id"].clone();
+                query_args["pageSize"] = json!(1);
+            }
+            let page = GraphData::app_page(&ctx.state, data.can_admin, &query_args).await?;
+            return Ok(if field == "app" {
+                page["items"]
+                    .as_array()
+                    .and_then(|items| items.first())
+                    .cloned()
+                    .unwrap_or(Value::Null)
+            } else {
+                page
+            });
         }
         return Ok(match field {
             "titles" => select(data.titles.clone(), args, "Title", data, true),
@@ -274,14 +310,15 @@ async fn resolve(
         ("Title","availableVersions")=>Ok(json!(ctx.state.titledb.versions(parent["titleId"].as_str().unwrap_or_default()).await.map(|v|v.versions.into_iter().map(|version|json!({"version":version,"releaseDate":v.release_dates.get(&version)})).collect::<Vec<_>>()).unwrap_or_default())),
         ("Title","availableDlc")=>Ok(json!(ctx.state.titledb.dlc_for_title(parent["titleId"].as_str().unwrap_or_default()).await.into_iter().map(|v|json!({"appId":v.title_id,"version":v.version})).collect::<Vec<_>>())),
         ("Title","ncaKey")=>Ok(parent["key"].clone()),
-        ("TitledbDlc" | "App", "titledb")=>Ok(mark(data.title(&parent["appId"]), "_shallow")),
-        ("App","title")=>Ok(mark(data.title(&parent["titleId"]), "_shallow")),
+        ("TitledbDlc" | "App", "titledb")=>Ok(mark(parent.get("_titledb").cloned().unwrap_or_else(||data.title(&parent["appId"])), "_shallow")),
+        ("App","title")=>Ok(mark(parent.get("_title").cloned().unwrap_or_else(||data.title(&parent["titleId"])), "_shallow")),
         ("App","versions")=>{
+            if let Some(versions) = parent.get("_versions") { let mut rows = versions.as_array().cloned().unwrap_or_default(); rows.sort_by_key(|v|v["version"].as_u64()); return Ok(json!(rows)); }
             let id=if parent["appType"]=="BASE" {format!("{}800",parent["titleId"].as_str().unwrap_or_default().get(..13).unwrap_or_default())}else{parent["appId"].as_str().unwrap_or_default().into()};
             let mut rows=data.apps.iter().filter(|a|a["appId"]==id).map(|a|json!({"version":a["appVersion"],"owned":a["owned"],"releaseDate":a["releaseDate"],"displayVersion":a["displayVersion"]})).collect::<Vec<_>>();rows.sort_by_key(|v|v["version"].as_u64());Ok(json!(rows))
         }
-        ("App","files")=>if data.can_admin {Ok(select(data.files.iter().filter(|f|parent["_fileIds"].as_array().is_some_and(|ids|ids.contains(&f["id"]))).cloned().map(|row| mark(row,"_backlink")).collect(),args,"File",data,false))}else{Ok(Value::Null)},
-        ("File","apps")=>Ok(select(data.apps.iter().filter(|a|a["_fileIds"].as_array().is_some_and(|ids|ids.contains(&parent["id"]))).cloned().map(|row| { let row = mark(row,"_filesUnavailable"); if parent["_backlink"] == true { mark(row,"_shallow") } else { row } }).collect(),args,"App",data,false)),
+        ("App","files")=>if data.can_admin {Ok(select(parent.get("_files").and_then(Value::as_array).unwrap_or(&data.files).iter().filter(|f|parent["_fileIds"].as_array().is_some_and(|ids|ids.contains(&f["id"]))).cloned().map(|row| mark(row,"_backlink")).collect(),args,"File",data,false))}else{Ok(Value::Null)},
+        ("File","apps")=>Ok(select(parent.get("_apps").and_then(Value::as_array).unwrap_or(&data.apps).iter().filter(|a|a["_fileIds"].as_array().is_some_and(|ids|ids.contains(&parent["id"]))).cloned().map(|row| { let row = mark(row,"_filesUnavailable"); if parent["_backlink"] == true { mark(row,"_shallow") } else { row } }).collect(),args,"App",data,false)),
         ("File","library")=>Ok(data.libraries.iter().find(|l|l["id"].as_str().and_then(|s|s.parse::<i64>().ok())==parent["libraryId"].as_i64()).cloned().unwrap_or(Value::Null)),
         ("Task","children")=>Ok(json!(data.tasks.iter().filter(|t|t["parentId"]==parent["id"]).cloned().map(|row| mark(row,"_shallow")).collect::<Vec<_>>())),
         _=>Ok(parent[field].clone()),
@@ -378,10 +415,14 @@ async fn mutate(ctx: &Context, field: &str, args: &Value) -> anyhow::Result<Valu
                         )? > 0)
                     })
                     .await?;
-                let records = storage.title_override_records().await?;
+                let records = storage.custom_title_records().await?;
                 let record =
                     records.iter().find(|(id, _)| id == &title_id).map(|(_, record)| record);
                 ctx.state.titledb.set_override(&title_id, record).await?;
+                ctx.state
+                    .titledb
+                    .set_extracted_overrides(storage.extracted_title_records().await?)
+                    .await?;
                 return Ok(json!(removed));
             }
             let record: Value =
@@ -390,9 +431,13 @@ async fn mutate(ctx: &Context, field: &str, args: &Value) -> anyhow::Result<Valu
             let save_id = title_id.clone();
             let save_record = record.to_string();
             storage.with_connection(move |conn| {conn.execute("INSERT INTO title_overrides(title_id,record) VALUES(?1,?2) ON CONFLICT(title_id) DO UPDATE SET record=excluded.record",rusqlite::params![save_id,save_record])?;Ok(())}).await?;
-            let records = storage.title_override_records().await?;
+            let records = storage.custom_title_records().await?;
             let record = records.iter().find(|(id, _)| id == &title_id).map(|(_, record)| record);
             ctx.state.titledb.set_override(&title_id, record).await?;
+            ctx.state
+                .titledb
+                .set_extracted_overrides(storage.extracted_title_records().await?)
+                .await?;
             crate::tasks::enqueue(storage, "process_library", json!({})).await?;
             let refreshed = GraphData::load(&ctx.state, true).await?;
             Ok(refreshed.title(&json!(title_id)))
@@ -470,7 +515,10 @@ async fn dispatch(
                 })
         })
     });
-    let data = if apps_only {
+    let sql_apps = apps_only && state.storage.is_some();
+    let data = if sql_apps {
+        Ok(GraphData { can_admin, ..GraphData::default() })
+    } else if apps_only {
         GraphData::load_apps(&state, can_admin).await
     } else {
         GraphData::load(&state, can_admin).await
@@ -479,7 +527,7 @@ async fn dispatch(
         tracing::error!(%error,"GraphQL snapshot failed");
         ApiError::Internal
     })?;
-    request = request.data(Context { state, data, can_shop });
+    request = request.data(Context { state, data, can_shop, sql_apps });
     let result = SCHEMA.execute(request).await;
     let encoded = serde_json::to_vec(&result).map_err(|_| ApiError::Internal)?;
     let etag = format!("\"{}\"", hex::encode(Sha256::digest(&encoded)));

@@ -18,6 +18,7 @@ pub struct Settings {
     pub worker: WorkerSettings,
     pub server: ServerSettings,
     pub services: ServiceSettings,
+    pub local_media: LocalMediaSettings,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -36,7 +37,27 @@ pub struct LibraryManagementSettings {
     pub compression: CompressionSettings,
     pub verification: VerificationSettings,
     pub delete_older_updates: bool,
+    pub deduplication: DeduplicationSettings,
+
     pub organizer: OrganizerSettings,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LocalMediaSettings {
+    pub enabled: bool,
+}
+impl Default for LocalMediaSettings {
+    fn default() -> Self {
+        Self { enabled: true }
+    }
+}
+
+/// Download-copy preference; automatic deletion is intentionally not implemented.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DeduplicationSettings {
+    pub prefer_multicontent: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -198,6 +219,7 @@ impl Default for Settings {
             worker: WorkerSettings::default(),
             server: ServerSettings::default(),
             services: ServiceSettings::default(),
+            local_media: LocalMediaSettings::default(),
         }
     }
 }
@@ -220,6 +242,8 @@ impl Default for LibraryManagementSettings {
             compression: CompressionSettings::default(),
             verification: VerificationSettings::default(),
             delete_older_updates: false,
+            deduplication: DeduplicationSettings::default(),
+
             organizer: OrganizerSettings::default(),
         }
     }
@@ -476,6 +500,27 @@ mod tests {
         assert_eq!(settings.scheduler.scan_interval, "12h");
         assert!(settings.shop.clients.tinfoil.encrypt);
         assert!(settings.shop.clients.sphaira.enabled);
+    }
+
+    #[test]
+    fn native_media_and_copy_preferences_round_trip() -> Result<()> {
+        let defaults = Settings::default();
+        assert!(defaults.local_media.enabled);
+        assert!(!defaults.library.management.deduplication.prefer_multicontent);
+        let settings: Settings = serde_yaml::from_str(
+            "local_media:\n  enabled: false\nlibrary:\n  management:\n    deduplication:\n      prefer_multicontent: true\n",
+        )?;
+        assert!(!settings.local_media.enabled);
+        assert!(settings.library.management.deduplication.prefer_multicontent);
+        assert_eq!(settings, serde_yaml::from_str(&serde_yaml::to_string(&settings)?)?);
+        assert!(serde_yaml::from_str::<Settings>("local_media: {enabled: bogus}").is_err());
+        assert!(
+            serde_yaml::from_str::<Settings>(
+                "library: {management: {deduplication: {prefer_multicontent: bogus}}}"
+            )
+            .is_err()
+        );
+        Ok(())
     }
 
     #[test]

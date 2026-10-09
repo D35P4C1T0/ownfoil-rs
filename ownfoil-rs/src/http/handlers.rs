@@ -153,6 +153,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/get_game/{id}", get(download_by_id))
         .route("/api/media/{title}/{kind}/{position}/{size}/{hash}", get(super::native::media))
         .route("/api/settings/services", post(super::native::services_post))
+        .route("/api/settings/local_media", post(settings_local_media_post))
+        .route("/api/settings/local_media/usage", get(settings_local_media_usage))
         .route("/api/shop/icon/{title_id}", get(shop_icon))
         .route("/api/shop/banner/{title_id}", get(shop_banner))
         .route("/api/saves/list", get(saves_list))
@@ -1116,6 +1118,13 @@ async fn settings_titles_post(
     titledb.language = body.language;
     state.titledb.set_config(titledb).await;
     state.titledb.refresh();
+    if state.settings.read().await.local_media.enabled {
+        if let Some(storage) = &state.storage {
+            crate::tasks::enqueue(storage, "download_media", serde_json::json!({}))
+                .await
+                .map_err(|_| ApiError::Internal)?;
+        }
+    }
     Ok(Json(serde_json::json!({ "success": true, "errors": [] })))
 }
 
@@ -1347,6 +1356,41 @@ async fn update_settings_section(
     *settings = candidate;
     drop(settings);
     Ok(Json(serde_json::json!({"success": true, "errors": []})))
+}
+
+async fn settings_local_media_usage(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    ensure_access(&state, &headers, session_token(&jar), Access::Admin).await?;
+    Ok(Json(crate::media::usage(&state).await.map_err(|_| ApiError::Internal)?))
+}
+async fn settings_local_media_post(
+    State(state): State<AppState>,
+    jar: CookieJar,
+    headers: HeaderMap,
+    Json(body): Json<crate::settings::LocalMediaSettings>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    ensure_access(&state, &headers, session_token(&jar), Access::Admin).await?;
+    ensure_same_origin(&headers)?;
+    let was_enabled;
+    {
+        let mut settings = state.settings.write().await;
+        was_enabled = settings.local_media.enabled;
+        let mut candidate = settings.clone();
+        candidate.local_media = body;
+        candidate.save(&state.settings_path).map_err(|_| ApiError::Internal)?;
+        *settings = candidate;
+    }
+    if !was_enabled && state.settings.read().await.local_media.enabled {
+        if let Some(storage) = &state.storage {
+            crate::tasks::enqueue(storage, "download_media", serde_json::json!({}))
+                .await
+                .map_err(|_| ApiError::Internal)?;
+        }
+    }
+    Ok(Json(serde_json::json!({"success":true,"errors":[]})))
 }
 
 async fn settings_library_management_post(

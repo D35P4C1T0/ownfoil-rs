@@ -1,0 +1,2889 @@
+{
+  "upstream": "a9ac7479f7b54cd52731b24947ac0631cb77ba5f",
+  "client": "338348e74b6d278bc570a9be5373d25197bf6c8d",
+  "source_sha256": {
+    "app/tasks.py": "ccd8edfb853929005debfc42f1cbf6c152eb4200f1f950ec3c2376383a4f8356",
+    "app/containers/nacp.py": "f89d830af3a84087d51d236cbbad2fba7c44d76140491594781f7dcc81808bd8",
+    "app/gql/types.py": "c7d07a2e30ef065e7c8ef2a6421790b9f7aa59ec807dc8c14af8dc909584c490",
+    "app/app.py": "6282a6d5f701b28449ae448f26bf5f2e022d51a7f535cacacf664193ab3d7c26",
+    "app/db.py": "6daa87eb1fab9337c7027cebd07eeffcfc40d18103342a452c7e2bb87e4034df",
+    "app/constants.py": "f2fcbc27a12df3ff9a1fb386d31972191ab337225b5fb7b6c7196989fe207b18",
+    "app/media.py": "758c1ecd1ab9b80ba94fe0fbc0eea526432d8fdac89bb177794a84d0a920ec50",
+    "app/titledb/schema.py": "3dab14bede8652210b08076f428bcfdf01141a5798c60ad1c138c8b97602b79b",
+    "app/gql/resolvers.py": "a63f16ef2b4678d962a39588c10bd2ba80f354341c0b1bd57a487af956917eca"
+  },
+  "titles": [
+    {
+      "id": 1,
+      "title_id": "0100000000AAAAA0",
+      "have_base": true,
+      "complete": true,
+      "up_to_date": false
+    },
+    {
+      "id": 2,
+      "title_id": "0100000000010000",
+      "have_base": true,
+      "complete": true,
+      "up_to_date": true
+    }
+  ],
+  "apps": [
+    {
+      "id": 1,
+      "title_id": 1,
+      "app_id": "0100000000AAAAA0",
+      "app_type": "BASE",
+      "app_version": "0",
+      "owned": true,
+      "display_version": "fixture-0"
+    },
+    {
+      "id": 2,
+      "title_id": 1,
+      "app_id": "0100000000AAA800",
+      "app_type": "UPDATE",
+      "app_version": "65536",
+      "owned": true,
+      "display_version": "fixture-65536"
+    },
+    {
+      "id": 3,
+      "title_id": 1,
+      "app_id": "0100000000AAA800",
+      "app_type": "UPDATE",
+      "app_version": "131072",
+      "owned": true,
+      "display_version": "fixture-131072"
+    },
+    {
+      "id": 4,
+      "title_id": 1,
+      "app_id": "0100000000AA1001",
+      "app_type": "DLC",
+      "app_version": "0",
+      "owned": true,
+      "display_version": "fixture-0"
+    },
+    {
+      "id": 5,
+      "title_id": 1,
+      "app_id": "0100000000AA1001",
+      "app_type": "DLC",
+      "app_version": "65536",
+      "owned": false,
+      "display_version": "fixture-65536"
+    },
+    {
+      "id": 6,
+      "title_id": 1,
+      "app_id": "0100000000AAA800",
+      "app_type": "UPDATE",
+      "app_version": "262144",
+      "owned": false,
+      "display_version": "fixture-262144"
+    },
+    {
+      "id": 7,
+      "title_id": 2,
+      "app_id": "0100000000010000",
+      "app_type": "BASE",
+      "app_version": "0",
+      "owned": true,
+      "display_version": "0.9"
+    }
+  ],
+  "files": [
+    {
+      "id": 1,
+      "library_id": 1,
+      "filename": "Alpha.nsp",
+      "extension": "nsp",
+      "size": 3000,
+      "download_token": "00000000000000000000000000000001",
+      "multicontent": false,
+      "nb_content": 0,
+      "compressed": false,
+      "organized": false,
+      "identification_type": "cnmt",
+      "added_at": "2026-01-01T00:00:01",
+      "apps": [
+        1
+      ]
+    },
+    {
+      "id": 2,
+      "library_id": 1,
+      "filename": "Alpha[v65536].nsp",
+      "extension": "nsp",
+      "size": 1000,
+      "download_token": "00000000000000000000000000000002",
+      "multicontent": false,
+      "nb_content": 0,
+      "compressed": false,
+      "organized": false,
+      "identification_type": "cnmt",
+      "added_at": "2026-01-01T00:00:02",
+      "apps": [
+        2
+      ]
+    },
+    {
+      "id": 3,
+      "library_id": 1,
+      "filename": "AlphaDLC.nsp",
+      "extension": "nsp",
+      "size": 2000,
+      "download_token": "00000000000000000000000000000003",
+      "multicontent": false,
+      "nb_content": 0,
+      "compressed": false,
+      "organized": false,
+      "identification_type": "cnmt",
+      "added_at": "2026-01-01T00:00:03",
+      "apps": [
+        4
+      ]
+    },
+    {
+      "id": 4,
+      "library_id": 1,
+      "filename": "Alpha[v131072].nsp",
+      "extension": "nsp",
+      "size": 1500,
+      "download_token": "00000000000000000000000000000004",
+      "multicontent": false,
+      "nb_content": 0,
+      "compressed": false,
+      "organized": false,
+      "identification_type": "cnmt",
+      "added_at": "2026-01-01T00:00:04",
+      "apps": [
+        3
+      ]
+    },
+    {
+      "id": 5,
+      "library_id": 2,
+      "filename": "AlphaBundle.xci",
+      "extension": "xci",
+      "size": 9000,
+      "download_token": "00000000000000000000000000000005",
+      "multicontent": true,
+      "nb_content": 2,
+      "compressed": false,
+      "organized": false,
+      "identification_type": "cnmt",
+      "added_at": "2026-01-01T00:00:05",
+      "apps": [
+        1,
+        3
+      ]
+    },
+    {
+      "id": 6,
+      "library_id": 2,
+      "filename": "Alpha.nsz",
+      "extension": "nsz",
+      "size": 750,
+      "download_token": "00000000000000000000000000000006",
+      "multicontent": false,
+      "nb_content": 0,
+      "compressed": true,
+      "organized": false,
+      "identification_type": "cnmt",
+      "added_at": "2026-01-01T00:00:06",
+      "apps": [
+        1
+      ]
+    },
+    {
+      "id": 7,
+      "library_id": 1,
+      "filename": "Absent.nsp",
+      "extension": "nsp",
+      "size": 600,
+      "download_token": "00000000000000000000000000000007",
+      "multicontent": false,
+      "nb_content": 0,
+      "compressed": false,
+      "organized": false,
+      "identification_type": "cnmt",
+      "added_at": "2026-01-01T00:00:07",
+      "apps": [
+        7
+      ]
+    }
+  ],
+  "metadata": {
+    "0100000000AAAAA0": {
+      "id": "0100000000AAAAA0",
+      "name": "Custom Alpha Game",
+      "publisher": "Nintendo"
+    },
+    "0100000000AA1001": {
+      "id": "0100000000AA1001",
+      "name": "Alpha Extra Levels"
+    },
+    "0100000000010000": {
+      "id": "0100000000010000",
+      "name": "Extracted Game",
+      "publisher": "Extracted Publisher"
+    }
+  },
+  "behavior": {
+    "metadata_priority": [
+      "custom",
+      "titledb",
+      "extract"
+    ],
+    "prefer_multicontent_default": false,
+    "local_media_default": true,
+    "media_grace_seconds": 3600,
+    "renditions": {
+      "thumb": [
+        [
+          176,
+          176
+        ],
+        [
+          320,
+          180
+        ],
+        90
+      ],
+      "client": [
+        [
+          256,
+          256
+        ],
+        [
+          720,
+          405
+        ],
+        85
+      ],
+      "screen": [
+        [
+          720,
+          720
+        ],
+        [
+          1280,
+          720
+        ],
+        85
+      ]
+    },
+    "locales": {
+      "US.en": "AmericanEnglish",
+      "GB.en": "BritishEnglish",
+      "CA.fr": "CanadianFrench",
+      "BR.pt": "BrazilianPortuguese",
+      "HK.zh": "TraditionalChinese",
+      "US.es": "LatinAmericanSpanish",
+      "ES.es": "Spanish",
+      "JP.unknown": "AmericanEnglish"
+    },
+    "fit_examples": [
+      {
+        "kind": "icon",
+        "size": "thumb",
+        "original": [
+          1920,
+          1080
+        ],
+        "result": [
+          176,
+          99
+        ]
+      },
+      {
+        "kind": "icon",
+        "size": "thumb",
+        "original": [
+          32,
+          16
+        ],
+        "result": [
+          32,
+          16
+        ]
+      },
+      {
+        "kind": "icon",
+        "size": "thumb",
+        "original": [
+          101,
+          997
+        ],
+        "result": [
+          18,
+          176
+        ]
+      },
+      {
+        "kind": "icon",
+        "size": "client",
+        "original": [
+          1920,
+          1080
+        ],
+        "result": [
+          256,
+          144
+        ]
+      },
+      {
+        "kind": "icon",
+        "size": "client",
+        "original": [
+          32,
+          16
+        ],
+        "result": [
+          32,
+          16
+        ]
+      },
+      {
+        "kind": "icon",
+        "size": "client",
+        "original": [
+          101,
+          997
+        ],
+        "result": [
+          26,
+          256
+        ]
+      },
+      {
+        "kind": "icon",
+        "size": "screen",
+        "original": [
+          1920,
+          1080
+        ],
+        "result": [
+          720,
+          405
+        ]
+      },
+      {
+        "kind": "icon",
+        "size": "screen",
+        "original": [
+          32,
+          16
+        ],
+        "result": [
+          32,
+          16
+        ]
+      },
+      {
+        "kind": "icon",
+        "size": "screen",
+        "original": [
+          101,
+          997
+        ],
+        "result": [
+          73,
+          720
+        ]
+      },
+      {
+        "kind": "banner",
+        "size": "thumb",
+        "original": [
+          1920,
+          1080
+        ],
+        "result": [
+          320,
+          180
+        ]
+      },
+      {
+        "kind": "banner",
+        "size": "thumb",
+        "original": [
+          32,
+          16
+        ],
+        "result": [
+          32,
+          16
+        ]
+      },
+      {
+        "kind": "banner",
+        "size": "thumb",
+        "original": [
+          101,
+          997
+        ],
+        "result": [
+          18,
+          180
+        ]
+      },
+      {
+        "kind": "banner",
+        "size": "client",
+        "original": [
+          1920,
+          1080
+        ],
+        "result": [
+          720,
+          405
+        ]
+      },
+      {
+        "kind": "banner",
+        "size": "client",
+        "original": [
+          32,
+          16
+        ],
+        "result": [
+          32,
+          16
+        ]
+      },
+      {
+        "kind": "banner",
+        "size": "client",
+        "original": [
+          101,
+          997
+        ],
+        "result": [
+          41,
+          405
+        ]
+      },
+      {
+        "kind": "banner",
+        "size": "screen",
+        "original": [
+          1920,
+          1080
+        ],
+        "result": [
+          1280,
+          720
+        ]
+      },
+      {
+        "kind": "banner",
+        "size": "screen",
+        "original": [
+          32,
+          16
+        ],
+        "result": [
+          32,
+          16
+        ]
+      },
+      {
+        "kind": "banner",
+        "size": "screen",
+        "original": [
+          101,
+          997
+        ],
+        "result": [
+          73,
+          720
+        ]
+      },
+      {
+        "kind": "screenshot",
+        "size": "thumb",
+        "original": [
+          1920,
+          1080
+        ],
+        "result": [
+          320,
+          180
+        ]
+      },
+      {
+        "kind": "screenshot",
+        "size": "thumb",
+        "original": [
+          32,
+          16
+        ],
+        "result": [
+          32,
+          16
+        ]
+      },
+      {
+        "kind": "screenshot",
+        "size": "thumb",
+        "original": [
+          101,
+          997
+        ],
+        "result": [
+          18,
+          180
+        ]
+      },
+      {
+        "kind": "screenshot",
+        "size": "client",
+        "original": [
+          1920,
+          1080
+        ],
+        "result": [
+          720,
+          405
+        ]
+      },
+      {
+        "kind": "screenshot",
+        "size": "client",
+        "original": [
+          32,
+          16
+        ],
+        "result": [
+          32,
+          16
+        ]
+      },
+      {
+        "kind": "screenshot",
+        "size": "client",
+        "original": [
+          101,
+          997
+        ],
+        "result": [
+          41,
+          405
+        ]
+      },
+      {
+        "kind": "screenshot",
+        "size": "screen",
+        "original": [
+          1920,
+          1080
+        ],
+        "result": [
+          1280,
+          720
+        ]
+      },
+      {
+        "kind": "screenshot",
+        "size": "screen",
+        "original": [
+          32,
+          16
+        ],
+        "result": [
+          32,
+          16
+        ]
+      },
+      {
+        "kind": "screenshot",
+        "size": "screen",
+        "original": [
+          101,
+          997
+        ],
+        "result": [
+          73,
+          720
+        ]
+      }
+    ]
+  },
+  "cases": [
+    {
+      "name": "all_NAME",
+      "prefer_multicontent": false,
+      "query": "query($page:Int!,$pageSize:Int!){apps(owned:true,appType:[BASE],groupByAppId:true,orderBy:{field:NAME,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 2,
+          "items": [
+            {
+              "appId": "0100000000010000",
+              "displayVersion": "0.9",
+              "latestOwnedVersion": null,
+              "titledb": {
+                "name": "Extracted Game",
+                "publisher": "Extracted Publisher",
+                "icon": null,
+                "banner": null
+              }
+            },
+            {
+              "appId": "0100000000AAAAA0",
+              "displayVersion": "fixture-0",
+              "latestOwnedVersion": {
+                "displayVersion": "fixture-131072"
+              },
+              "titledb": {
+                "name": "Custom Alpha Game",
+                "publisher": "Nintendo",
+                "icon": null,
+                "banner": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "all_NAME",
+      "prefer_multicontent": false,
+      "query": "query($page:Int!,$pageSize:Int!){apps(owned:true,appType:[BASE],groupByAppId:true,orderBy:{field:NAME,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 2,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 2,
+          "items": []
+        }
+      }
+    },
+    {
+      "name": "all_ADDED_AT",
+      "prefer_multicontent": false,
+      "query": "query($page:Int!,$pageSize:Int!){apps(owned:true,appType:[BASE],groupByAppId:true,orderBy:{field:ADDED_AT,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 2,
+          "items": [
+            {
+              "appId": "0100000000010000",
+              "displayVersion": "0.9",
+              "latestOwnedVersion": null,
+              "titledb": {
+                "name": "Extracted Game",
+                "publisher": "Extracted Publisher",
+                "icon": null,
+                "banner": null
+              }
+            },
+            {
+              "appId": "0100000000AAAAA0",
+              "displayVersion": "fixture-0",
+              "latestOwnedVersion": {
+                "displayVersion": "fixture-131072"
+              },
+              "titledb": {
+                "name": "Custom Alpha Game",
+                "publisher": "Nintendo",
+                "icon": null,
+                "banner": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "all_ADDED_AT",
+      "prefer_multicontent": false,
+      "query": "query($page:Int!,$pageSize:Int!){apps(owned:true,appType:[BASE],groupByAppId:true,orderBy:{field:ADDED_AT,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 2,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 2,
+          "items": []
+        }
+      }
+    },
+    {
+      "name": "all_RELEASE_DATE",
+      "prefer_multicontent": false,
+      "query": "query($page:Int!,$pageSize:Int!){apps(owned:true,appType:[BASE],groupByAppId:true,orderBy:{field:RELEASE_DATE,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 2,
+          "items": [
+            {
+              "appId": "0100000000010000",
+              "displayVersion": "0.9",
+              "latestOwnedVersion": null,
+              "titledb": {
+                "name": "Extracted Game",
+                "publisher": "Extracted Publisher",
+                "icon": null,
+                "banner": null
+              }
+            },
+            {
+              "appId": "0100000000AAAAA0",
+              "displayVersion": "fixture-0",
+              "latestOwnedVersion": {
+                "displayVersion": "fixture-131072"
+              },
+              "titledb": {
+                "name": "Custom Alpha Game",
+                "publisher": "Nintendo",
+                "icon": null,
+                "banner": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "all_RELEASE_DATE",
+      "prefer_multicontent": false,
+      "query": "query($page:Int!,$pageSize:Int!){apps(owned:true,appType:[BASE],groupByAppId:true,orderBy:{field:RELEASE_DATE,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 2,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 2,
+          "items": []
+        }
+      }
+    },
+    {
+      "name": "new_NAME",
+      "prefer_multicontent": false,
+      "query": "query($page:Int!,$pageSize:Int!,$appIds:[String!]){apps(owned:true,appType:[BASE],groupByAppId:true,filter:{appId:{notIn:$appIds}},orderBy:{field:NAME,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 2,
+          "items": [
+            {
+              "appId": "0100000000010000",
+              "displayVersion": "0.9",
+              "latestOwnedVersion": null,
+              "titledb": {
+                "name": "Extracted Game",
+                "publisher": "Extracted Publisher",
+                "icon": null,
+                "banner": null
+              }
+            },
+            {
+              "appId": "0100000000AAAAA0",
+              "displayVersion": "fixture-0",
+              "latestOwnedVersion": {
+                "displayVersion": "fixture-131072"
+              },
+              "titledb": {
+                "name": "Custom Alpha Game",
+                "publisher": "Nintendo",
+                "icon": null,
+                "banner": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "new_NAME",
+      "prefer_multicontent": false,
+      "query": "query($page:Int!,$pageSize:Int!,$appIds:[String!]){apps(owned:true,appType:[BASE],groupByAppId:true,filter:{appId:{notIn:$appIds}},orderBy:{field:NAME,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 2,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 2,
+          "items": []
+        }
+      }
+    },
+    {
+      "name": "new_ADDED_AT",
+      "prefer_multicontent": false,
+      "query": "query($page:Int!,$pageSize:Int!,$appIds:[String!]){apps(owned:true,appType:[BASE],groupByAppId:true,filter:{appId:{notIn:$appIds}},orderBy:{field:ADDED_AT,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 2,
+          "items": [
+            {
+              "appId": "0100000000010000",
+              "displayVersion": "0.9",
+              "latestOwnedVersion": null,
+              "titledb": {
+                "name": "Extracted Game",
+                "publisher": "Extracted Publisher",
+                "icon": null,
+                "banner": null
+              }
+            },
+            {
+              "appId": "0100000000AAAAA0",
+              "displayVersion": "fixture-0",
+              "latestOwnedVersion": {
+                "displayVersion": "fixture-131072"
+              },
+              "titledb": {
+                "name": "Custom Alpha Game",
+                "publisher": "Nintendo",
+                "icon": null,
+                "banner": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "new_ADDED_AT",
+      "prefer_multicontent": false,
+      "query": "query($page:Int!,$pageSize:Int!,$appIds:[String!]){apps(owned:true,appType:[BASE],groupByAppId:true,filter:{appId:{notIn:$appIds}},orderBy:{field:ADDED_AT,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 2,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 2,
+          "items": []
+        }
+      }
+    },
+    {
+      "name": "new_RELEASE_DATE",
+      "prefer_multicontent": false,
+      "query": "query($page:Int!,$pageSize:Int!,$appIds:[String!]){apps(owned:true,appType:[BASE],groupByAppId:true,filter:{appId:{notIn:$appIds}},orderBy:{field:RELEASE_DATE,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 2,
+          "items": [
+            {
+              "appId": "0100000000010000",
+              "displayVersion": "0.9",
+              "latestOwnedVersion": null,
+              "titledb": {
+                "name": "Extracted Game",
+                "publisher": "Extracted Publisher",
+                "icon": null,
+                "banner": null
+              }
+            },
+            {
+              "appId": "0100000000AAAAA0",
+              "displayVersion": "fixture-0",
+              "latestOwnedVersion": {
+                "displayVersion": "fixture-131072"
+              },
+              "titledb": {
+                "name": "Custom Alpha Game",
+                "publisher": "Nintendo",
+                "icon": null,
+                "banner": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "new_RELEASE_DATE",
+      "prefer_multicontent": false,
+      "query": "query($page:Int!,$pageSize:Int!,$appIds:[String!]){apps(owned:true,appType:[BASE],groupByAppId:true,filter:{appId:{notIn:$appIds}},orderBy:{field:RELEASE_DATE,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 2,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 2,
+          "items": []
+        }
+      }
+    },
+    {
+      "name": "updates_NAME",
+      "prefer_multicontent": false,
+      "query": "query($page:Int!,$pageSize:Int!,$appIds:[String!]){apps(owned:true,appType:[UPDATE],groupByAppId:true,filter:{appId:{in:$appIds}},orderBy:{field:NAME,direction:DESC},page:$page,pageSize:$pageSize){total items{appId titleId displayVersion title{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 1,
+          "items": [
+            {
+              "appId": "0100000000AAA800",
+              "titleId": "0100000000AAAAA0",
+              "displayVersion": "fixture-131072",
+              "title": {
+                "name": "Custom Alpha Game",
+                "publisher": "Nintendo",
+                "icon": null,
+                "banner": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "updates_NAME",
+      "prefer_multicontent": false,
+      "query": "query($page:Int!,$pageSize:Int!,$appIds:[String!]){apps(owned:true,appType:[UPDATE],groupByAppId:true,filter:{appId:{in:$appIds}},orderBy:{field:NAME,direction:DESC},page:$page,pageSize:$pageSize){total items{appId titleId displayVersion title{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 2,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 1,
+          "items": []
+        }
+      }
+    },
+    {
+      "name": "updates_ADDED_AT",
+      "prefer_multicontent": false,
+      "query": "query($page:Int!,$pageSize:Int!,$appIds:[String!]){apps(owned:true,appType:[UPDATE],groupByAppId:true,filter:{appId:{in:$appIds}},orderBy:{field:ADDED_AT,direction:DESC},page:$page,pageSize:$pageSize){total items{appId titleId displayVersion title{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 1,
+          "items": [
+            {
+              "appId": "0100000000AAA800",
+              "titleId": "0100000000AAAAA0",
+              "displayVersion": "fixture-131072",
+              "title": {
+                "name": "Custom Alpha Game",
+                "publisher": "Nintendo",
+                "icon": null,
+                "banner": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "updates_ADDED_AT",
+      "prefer_multicontent": false,
+      "query": "query($page:Int!,$pageSize:Int!,$appIds:[String!]){apps(owned:true,appType:[UPDATE],groupByAppId:true,filter:{appId:{in:$appIds}},orderBy:{field:ADDED_AT,direction:DESC},page:$page,pageSize:$pageSize){total items{appId titleId displayVersion title{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 2,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 1,
+          "items": []
+        }
+      }
+    },
+    {
+      "name": "updates_RELEASE_DATE",
+      "prefer_multicontent": false,
+      "query": "query($page:Int!,$pageSize:Int!,$appIds:[String!]){apps(owned:true,appType:[UPDATE],groupByAppId:true,filter:{appId:{in:$appIds}},orderBy:{field:RELEASE_DATE,direction:DESC},page:$page,pageSize:$pageSize){total items{appId titleId displayVersion title{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 1,
+          "items": [
+            {
+              "appId": "0100000000AAA800",
+              "titleId": "0100000000AAAAA0",
+              "displayVersion": "fixture-131072",
+              "title": {
+                "name": "Custom Alpha Game",
+                "publisher": "Nintendo",
+                "icon": null,
+                "banner": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "updates_RELEASE_DATE",
+      "prefer_multicontent": false,
+      "query": "query($page:Int!,$pageSize:Int!,$appIds:[String!]){apps(owned:true,appType:[UPDATE],groupByAppId:true,filter:{appId:{in:$appIds}},orderBy:{field:RELEASE_DATE,direction:DESC},page:$page,pageSize:$pageSize){total items{appId titleId displayVersion title{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 2,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 1,
+          "items": []
+        }
+      }
+    },
+    {
+      "name": "dlc_NAME",
+      "prefer_multicontent": false,
+      "query": "query($page:Int!,$pageSize:Int!,$titleIds:[String!],$appIds:[String!]){apps(owned:true,appType:[DLC],groupByAppId:true,filter:{titleId:{in:$titleIds},appId:{notIn:$appIds}},orderBy:{field:NAME,direction:DESC},page:$page,pageSize:$pageSize){total items{appId titleId displayVersion downloadUrl downloadExtension titledb{name publisher banner(size:THUMB){url local}} title{name icon(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 1,
+          "items": [
+            {
+              "appId": "0100000000AA1001",
+              "titleId": "0100000000AAAAA0",
+              "displayVersion": "fixture-0",
+              "downloadUrl": "/api/download/00000000000000000000000000000003",
+              "downloadExtension": "nsp",
+              "titledb": {
+                "name": "Alpha Extra Levels",
+                "publisher": null,
+                "banner": null
+              },
+              "title": {
+                "name": "Custom Alpha Game",
+                "icon": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "dlc_NAME",
+      "prefer_multicontent": false,
+      "query": "query($page:Int!,$pageSize:Int!,$titleIds:[String!],$appIds:[String!]){apps(owned:true,appType:[DLC],groupByAppId:true,filter:{titleId:{in:$titleIds},appId:{notIn:$appIds}},orderBy:{field:NAME,direction:DESC},page:$page,pageSize:$pageSize){total items{appId titleId displayVersion downloadUrl downloadExtension titledb{name publisher banner(size:THUMB){url local}} title{name icon(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 2,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 1,
+          "items": []
+        }
+      }
+    },
+    {
+      "name": "dlc_ADDED_AT",
+      "prefer_multicontent": false,
+      "query": "query($page:Int!,$pageSize:Int!,$titleIds:[String!],$appIds:[String!]){apps(owned:true,appType:[DLC],groupByAppId:true,filter:{titleId:{in:$titleIds},appId:{notIn:$appIds}},orderBy:{field:ADDED_AT,direction:DESC},page:$page,pageSize:$pageSize){total items{appId titleId displayVersion downloadUrl downloadExtension titledb{name publisher banner(size:THUMB){url local}} title{name icon(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 1,
+          "items": [
+            {
+              "appId": "0100000000AA1001",
+              "titleId": "0100000000AAAAA0",
+              "displayVersion": "fixture-0",
+              "downloadUrl": "/api/download/00000000000000000000000000000003",
+              "downloadExtension": "nsp",
+              "titledb": {
+                "name": "Alpha Extra Levels",
+                "publisher": null,
+                "banner": null
+              },
+              "title": {
+                "name": "Custom Alpha Game",
+                "icon": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "dlc_ADDED_AT",
+      "prefer_multicontent": false,
+      "query": "query($page:Int!,$pageSize:Int!,$titleIds:[String!],$appIds:[String!]){apps(owned:true,appType:[DLC],groupByAppId:true,filter:{titleId:{in:$titleIds},appId:{notIn:$appIds}},orderBy:{field:ADDED_AT,direction:DESC},page:$page,pageSize:$pageSize){total items{appId titleId displayVersion downloadUrl downloadExtension titledb{name publisher banner(size:THUMB){url local}} title{name icon(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 2,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 1,
+          "items": []
+        }
+      }
+    },
+    {
+      "name": "dlc_RELEASE_DATE",
+      "prefer_multicontent": false,
+      "query": "query($page:Int!,$pageSize:Int!,$titleIds:[String!],$appIds:[String!]){apps(owned:true,appType:[DLC],groupByAppId:true,filter:{titleId:{in:$titleIds},appId:{notIn:$appIds}},orderBy:{field:RELEASE_DATE,direction:DESC},page:$page,pageSize:$pageSize){total items{appId titleId displayVersion downloadUrl downloadExtension titledb{name publisher banner(size:THUMB){url local}} title{name icon(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 1,
+          "items": [
+            {
+              "appId": "0100000000AA1001",
+              "titleId": "0100000000AAAAA0",
+              "displayVersion": "fixture-0",
+              "downloadUrl": "/api/download/00000000000000000000000000000003",
+              "downloadExtension": "nsp",
+              "titledb": {
+                "name": "Alpha Extra Levels",
+                "publisher": null,
+                "banner": null
+              },
+              "title": {
+                "name": "Custom Alpha Game",
+                "icon": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "dlc_RELEASE_DATE",
+      "prefer_multicontent": false,
+      "query": "query($page:Int!,$pageSize:Int!,$titleIds:[String!],$appIds:[String!]){apps(owned:true,appType:[DLC],groupByAppId:true,filter:{titleId:{in:$titleIds},appId:{notIn:$appIds}},orderBy:{field:RELEASE_DATE,direction:DESC},page:$page,pageSize:$pageSize){total items{appId titleId displayVersion downloadUrl downloadExtension titledb{name publisher banner(size:THUMB){url local}} title{name icon(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 2,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 1,
+          "items": []
+        }
+      }
+    },
+    {
+      "name": "search_NAME",
+      "prefer_multicontent": false,
+      "query": "query($page:Int!,$pageSize:Int!,$search:String){apps(owned:true,appType:[BASE],groupByAppId:true,search:$search,orderBy:{field:NAME,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 2,
+          "items": [
+            {
+              "appId": "0100000000010000",
+              "displayVersion": "0.9",
+              "latestOwnedVersion": null,
+              "titledb": {
+                "name": "Extracted Game",
+                "publisher": "Extracted Publisher",
+                "icon": null,
+                "banner": null
+              }
+            },
+            {
+              "appId": "0100000000AAAAA0",
+              "displayVersion": "fixture-0",
+              "latestOwnedVersion": {
+                "displayVersion": "fixture-131072"
+              },
+              "titledb": {
+                "name": "Custom Alpha Game",
+                "publisher": "Nintendo",
+                "icon": null,
+                "banner": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "search_NAME",
+      "prefer_multicontent": false,
+      "query": "query($page:Int!,$pageSize:Int!,$search:String){apps(owned:true,appType:[BASE],groupByAppId:true,search:$search,orderBy:{field:NAME,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 2,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 2,
+          "items": []
+        }
+      }
+    },
+    {
+      "name": "search_ADDED_AT",
+      "prefer_multicontent": false,
+      "query": "query($page:Int!,$pageSize:Int!,$search:String){apps(owned:true,appType:[BASE],groupByAppId:true,search:$search,orderBy:{field:ADDED_AT,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 2,
+          "items": [
+            {
+              "appId": "0100000000010000",
+              "displayVersion": "0.9",
+              "latestOwnedVersion": null,
+              "titledb": {
+                "name": "Extracted Game",
+                "publisher": "Extracted Publisher",
+                "icon": null,
+                "banner": null
+              }
+            },
+            {
+              "appId": "0100000000AAAAA0",
+              "displayVersion": "fixture-0",
+              "latestOwnedVersion": {
+                "displayVersion": "fixture-131072"
+              },
+              "titledb": {
+                "name": "Custom Alpha Game",
+                "publisher": "Nintendo",
+                "icon": null,
+                "banner": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "search_ADDED_AT",
+      "prefer_multicontent": false,
+      "query": "query($page:Int!,$pageSize:Int!,$search:String){apps(owned:true,appType:[BASE],groupByAppId:true,search:$search,orderBy:{field:ADDED_AT,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 2,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 2,
+          "items": []
+        }
+      }
+    },
+    {
+      "name": "search_RELEASE_DATE",
+      "prefer_multicontent": false,
+      "query": "query($page:Int!,$pageSize:Int!,$search:String){apps(owned:true,appType:[BASE],groupByAppId:true,search:$search,orderBy:{field:RELEASE_DATE,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 2,
+          "items": [
+            {
+              "appId": "0100000000010000",
+              "displayVersion": "0.9",
+              "latestOwnedVersion": null,
+              "titledb": {
+                "name": "Extracted Game",
+                "publisher": "Extracted Publisher",
+                "icon": null,
+                "banner": null
+              }
+            },
+            {
+              "appId": "0100000000AAAAA0",
+              "displayVersion": "fixture-0",
+              "latestOwnedVersion": {
+                "displayVersion": "fixture-131072"
+              },
+              "titledb": {
+                "name": "Custom Alpha Game",
+                "publisher": "Nintendo",
+                "icon": null,
+                "banner": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "search_RELEASE_DATE",
+      "prefer_multicontent": false,
+      "query": "query($page:Int!,$pageSize:Int!,$search:String){apps(owned:true,appType:[BASE],groupByAppId:true,search:$search,orderBy:{field:RELEASE_DATE,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 2,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 2,
+          "items": []
+        }
+      }
+    },
+    {
+      "name": "TITLE_QUERY",
+      "prefer_multicontent": false,
+      "query": "query($id:ID!){title(titleId:$id){name publisher intro description releaseDate category numberOfPlayers size rating region banner(size:CLIENT){url local} fullBanner:banner(size:SCREEN){url local} availableVersions{version releaseDate} screenshots(size:CLIENT){url local} full:screenshots(size:SCREEN){url local} base:apps(owned:true,appType:[BASE]){displayVersion downloadSize downloadUrl downloadExtension latestOwnedVersion{version displayVersion}} updates:apps(owned:true,appType:[UPDATE]){appVersion displayVersion downloadUrl downloadExtension} dlc:apps(owned:true,appType:[DLC]){appId appVersion downloadUrl downloadExtension titledb{name intro banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "title": {
+          "name": "Custom Alpha Game",
+          "publisher": "Nintendo",
+          "intro": null,
+          "description": null,
+          "releaseDate": null,
+          "category": null,
+          "numberOfPlayers": null,
+          "size": null,
+          "rating": null,
+          "region": null,
+          "banner": null,
+          "fullBanner": null,
+          "availableVersions": [],
+          "screenshots": null,
+          "full": null,
+          "base": [
+            {
+              "displayVersion": "fixture-0",
+              "downloadSize": 750,
+              "downloadUrl": "/api/download/00000000000000000000000000000006",
+              "downloadExtension": "nsz",
+              "latestOwnedVersion": {
+                "version": 131072,
+                "displayVersion": "fixture-131072"
+              }
+            }
+          ],
+          "updates": [
+            {
+              "appVersion": 65536,
+              "displayVersion": "fixture-65536",
+              "downloadUrl": "/api/download/00000000000000000000000000000002",
+              "downloadExtension": "nsp"
+            },
+            {
+              "appVersion": 131072,
+              "displayVersion": "fixture-131072",
+              "downloadUrl": "/api/download/00000000000000000000000000000004",
+              "downloadExtension": "nsp"
+            }
+          ],
+          "dlc": [
+            {
+              "appId": "0100000000AA1001",
+              "appVersion": 0,
+              "downloadUrl": "/api/download/00000000000000000000000000000003",
+              "downloadExtension": "nsp",
+              "titledb": {
+                "name": "Alpha Extra Levels",
+                "intro": null,
+                "banner": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "TITLE_QUERY",
+      "prefer_multicontent": false,
+      "query": "query($id:ID!){title(titleId:$id){name publisher intro description releaseDate category numberOfPlayers size rating region banner(size:CLIENT){url local} fullBanner:banner(size:SCREEN){url local} availableVersions{version releaseDate} screenshots(size:CLIENT){url local} full:screenshots(size:SCREEN){url local} base:apps(owned:true,appType:[BASE]){displayVersion downloadSize downloadUrl downloadExtension latestOwnedVersion{version displayVersion}} updates:apps(owned:true,appType:[UPDATE]){appVersion displayVersion downloadUrl downloadExtension} dlc:apps(owned:true,appType:[DLC]){appId appVersion downloadUrl downloadExtension titledb{name intro banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 2,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "title": {
+          "name": "Custom Alpha Game",
+          "publisher": "Nintendo",
+          "intro": null,
+          "description": null,
+          "releaseDate": null,
+          "category": null,
+          "numberOfPlayers": null,
+          "size": null,
+          "rating": null,
+          "region": null,
+          "banner": null,
+          "fullBanner": null,
+          "availableVersions": [],
+          "screenshots": null,
+          "full": null,
+          "base": [
+            {
+              "displayVersion": "fixture-0",
+              "downloadSize": 750,
+              "downloadUrl": "/api/download/00000000000000000000000000000006",
+              "downloadExtension": "nsz",
+              "latestOwnedVersion": {
+                "version": 131072,
+                "displayVersion": "fixture-131072"
+              }
+            }
+          ],
+          "updates": [
+            {
+              "appVersion": 65536,
+              "displayVersion": "fixture-65536",
+              "downloadUrl": "/api/download/00000000000000000000000000000002",
+              "downloadExtension": "nsp"
+            },
+            {
+              "appVersion": 131072,
+              "displayVersion": "fixture-131072",
+              "downloadUrl": "/api/download/00000000000000000000000000000004",
+              "downloadExtension": "nsp"
+            }
+          ],
+          "dlc": [
+            {
+              "appId": "0100000000AA1001",
+              "appVersion": 0,
+              "downloadUrl": "/api/download/00000000000000000000000000000003",
+              "downloadExtension": "nsp",
+              "titledb": {
+                "name": "Alpha Extra Levels",
+                "intro": null,
+                "banner": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "UPDATES_QUERY",
+      "prefer_multicontent": false,
+      "query": "query($page:Int!,$pageSize:Int!,$titleIds:[String!]){apps(owned:true,appType:[UPDATE],groupByAppId:true,filter:{titleId:{in:$titleIds}},page:$page,pageSize:$pageSize){total items{appId titleId appVersion}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 1,
+          "items": [
+            {
+              "appId": "0100000000AAA800",
+              "titleId": "0100000000AAAAA0",
+              "appVersion": 131072
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "UPDATES_QUERY",
+      "prefer_multicontent": false,
+      "query": "query($page:Int!,$pageSize:Int!,$titleIds:[String!]){apps(owned:true,appType:[UPDATE],groupByAppId:true,filter:{titleId:{in:$titleIds}},page:$page,pageSize:$pageSize){total items{appId titleId appVersion}}}",
+      "variables": {
+        "page": 2,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 1,
+          "items": []
+        }
+      }
+    },
+    {
+      "name": "all_NAME",
+      "prefer_multicontent": true,
+      "query": "query($page:Int!,$pageSize:Int!){apps(owned:true,appType:[BASE],groupByAppId:true,orderBy:{field:NAME,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 2,
+          "items": [
+            {
+              "appId": "0100000000010000",
+              "displayVersion": "0.9",
+              "latestOwnedVersion": null,
+              "titledb": {
+                "name": "Extracted Game",
+                "publisher": "Extracted Publisher",
+                "icon": null,
+                "banner": null
+              }
+            },
+            {
+              "appId": "0100000000AAAAA0",
+              "displayVersion": "fixture-0",
+              "latestOwnedVersion": {
+                "displayVersion": "fixture-131072"
+              },
+              "titledb": {
+                "name": "Custom Alpha Game",
+                "publisher": "Nintendo",
+                "icon": null,
+                "banner": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "all_NAME",
+      "prefer_multicontent": true,
+      "query": "query($page:Int!,$pageSize:Int!){apps(owned:true,appType:[BASE],groupByAppId:true,orderBy:{field:NAME,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 2,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 2,
+          "items": []
+        }
+      }
+    },
+    {
+      "name": "all_ADDED_AT",
+      "prefer_multicontent": true,
+      "query": "query($page:Int!,$pageSize:Int!){apps(owned:true,appType:[BASE],groupByAppId:true,orderBy:{field:ADDED_AT,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 2,
+          "items": [
+            {
+              "appId": "0100000000010000",
+              "displayVersion": "0.9",
+              "latestOwnedVersion": null,
+              "titledb": {
+                "name": "Extracted Game",
+                "publisher": "Extracted Publisher",
+                "icon": null,
+                "banner": null
+              }
+            },
+            {
+              "appId": "0100000000AAAAA0",
+              "displayVersion": "fixture-0",
+              "latestOwnedVersion": {
+                "displayVersion": "fixture-131072"
+              },
+              "titledb": {
+                "name": "Custom Alpha Game",
+                "publisher": "Nintendo",
+                "icon": null,
+                "banner": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "all_ADDED_AT",
+      "prefer_multicontent": true,
+      "query": "query($page:Int!,$pageSize:Int!){apps(owned:true,appType:[BASE],groupByAppId:true,orderBy:{field:ADDED_AT,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 2,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 2,
+          "items": []
+        }
+      }
+    },
+    {
+      "name": "all_RELEASE_DATE",
+      "prefer_multicontent": true,
+      "query": "query($page:Int!,$pageSize:Int!){apps(owned:true,appType:[BASE],groupByAppId:true,orderBy:{field:RELEASE_DATE,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 2,
+          "items": [
+            {
+              "appId": "0100000000010000",
+              "displayVersion": "0.9",
+              "latestOwnedVersion": null,
+              "titledb": {
+                "name": "Extracted Game",
+                "publisher": "Extracted Publisher",
+                "icon": null,
+                "banner": null
+              }
+            },
+            {
+              "appId": "0100000000AAAAA0",
+              "displayVersion": "fixture-0",
+              "latestOwnedVersion": {
+                "displayVersion": "fixture-131072"
+              },
+              "titledb": {
+                "name": "Custom Alpha Game",
+                "publisher": "Nintendo",
+                "icon": null,
+                "banner": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "all_RELEASE_DATE",
+      "prefer_multicontent": true,
+      "query": "query($page:Int!,$pageSize:Int!){apps(owned:true,appType:[BASE],groupByAppId:true,orderBy:{field:RELEASE_DATE,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 2,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 2,
+          "items": []
+        }
+      }
+    },
+    {
+      "name": "new_NAME",
+      "prefer_multicontent": true,
+      "query": "query($page:Int!,$pageSize:Int!,$appIds:[String!]){apps(owned:true,appType:[BASE],groupByAppId:true,filter:{appId:{notIn:$appIds}},orderBy:{field:NAME,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 2,
+          "items": [
+            {
+              "appId": "0100000000010000",
+              "displayVersion": "0.9",
+              "latestOwnedVersion": null,
+              "titledb": {
+                "name": "Extracted Game",
+                "publisher": "Extracted Publisher",
+                "icon": null,
+                "banner": null
+              }
+            },
+            {
+              "appId": "0100000000AAAAA0",
+              "displayVersion": "fixture-0",
+              "latestOwnedVersion": {
+                "displayVersion": "fixture-131072"
+              },
+              "titledb": {
+                "name": "Custom Alpha Game",
+                "publisher": "Nintendo",
+                "icon": null,
+                "banner": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "new_NAME",
+      "prefer_multicontent": true,
+      "query": "query($page:Int!,$pageSize:Int!,$appIds:[String!]){apps(owned:true,appType:[BASE],groupByAppId:true,filter:{appId:{notIn:$appIds}},orderBy:{field:NAME,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 2,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 2,
+          "items": []
+        }
+      }
+    },
+    {
+      "name": "new_ADDED_AT",
+      "prefer_multicontent": true,
+      "query": "query($page:Int!,$pageSize:Int!,$appIds:[String!]){apps(owned:true,appType:[BASE],groupByAppId:true,filter:{appId:{notIn:$appIds}},orderBy:{field:ADDED_AT,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 2,
+          "items": [
+            {
+              "appId": "0100000000010000",
+              "displayVersion": "0.9",
+              "latestOwnedVersion": null,
+              "titledb": {
+                "name": "Extracted Game",
+                "publisher": "Extracted Publisher",
+                "icon": null,
+                "banner": null
+              }
+            },
+            {
+              "appId": "0100000000AAAAA0",
+              "displayVersion": "fixture-0",
+              "latestOwnedVersion": {
+                "displayVersion": "fixture-131072"
+              },
+              "titledb": {
+                "name": "Custom Alpha Game",
+                "publisher": "Nintendo",
+                "icon": null,
+                "banner": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "new_ADDED_AT",
+      "prefer_multicontent": true,
+      "query": "query($page:Int!,$pageSize:Int!,$appIds:[String!]){apps(owned:true,appType:[BASE],groupByAppId:true,filter:{appId:{notIn:$appIds}},orderBy:{field:ADDED_AT,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 2,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 2,
+          "items": []
+        }
+      }
+    },
+    {
+      "name": "new_RELEASE_DATE",
+      "prefer_multicontent": true,
+      "query": "query($page:Int!,$pageSize:Int!,$appIds:[String!]){apps(owned:true,appType:[BASE],groupByAppId:true,filter:{appId:{notIn:$appIds}},orderBy:{field:RELEASE_DATE,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 2,
+          "items": [
+            {
+              "appId": "0100000000010000",
+              "displayVersion": "0.9",
+              "latestOwnedVersion": null,
+              "titledb": {
+                "name": "Extracted Game",
+                "publisher": "Extracted Publisher",
+                "icon": null,
+                "banner": null
+              }
+            },
+            {
+              "appId": "0100000000AAAAA0",
+              "displayVersion": "fixture-0",
+              "latestOwnedVersion": {
+                "displayVersion": "fixture-131072"
+              },
+              "titledb": {
+                "name": "Custom Alpha Game",
+                "publisher": "Nintendo",
+                "icon": null,
+                "banner": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "new_RELEASE_DATE",
+      "prefer_multicontent": true,
+      "query": "query($page:Int!,$pageSize:Int!,$appIds:[String!]){apps(owned:true,appType:[BASE],groupByAppId:true,filter:{appId:{notIn:$appIds}},orderBy:{field:RELEASE_DATE,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 2,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 2,
+          "items": []
+        }
+      }
+    },
+    {
+      "name": "updates_NAME",
+      "prefer_multicontent": true,
+      "query": "query($page:Int!,$pageSize:Int!,$appIds:[String!]){apps(owned:true,appType:[UPDATE],groupByAppId:true,filter:{appId:{in:$appIds}},orderBy:{field:NAME,direction:DESC},page:$page,pageSize:$pageSize){total items{appId titleId displayVersion title{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 1,
+          "items": [
+            {
+              "appId": "0100000000AAA800",
+              "titleId": "0100000000AAAAA0",
+              "displayVersion": "fixture-131072",
+              "title": {
+                "name": "Custom Alpha Game",
+                "publisher": "Nintendo",
+                "icon": null,
+                "banner": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "updates_NAME",
+      "prefer_multicontent": true,
+      "query": "query($page:Int!,$pageSize:Int!,$appIds:[String!]){apps(owned:true,appType:[UPDATE],groupByAppId:true,filter:{appId:{in:$appIds}},orderBy:{field:NAME,direction:DESC},page:$page,pageSize:$pageSize){total items{appId titleId displayVersion title{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 2,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 1,
+          "items": []
+        }
+      }
+    },
+    {
+      "name": "updates_ADDED_AT",
+      "prefer_multicontent": true,
+      "query": "query($page:Int!,$pageSize:Int!,$appIds:[String!]){apps(owned:true,appType:[UPDATE],groupByAppId:true,filter:{appId:{in:$appIds}},orderBy:{field:ADDED_AT,direction:DESC},page:$page,pageSize:$pageSize){total items{appId titleId displayVersion title{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 1,
+          "items": [
+            {
+              "appId": "0100000000AAA800",
+              "titleId": "0100000000AAAAA0",
+              "displayVersion": "fixture-131072",
+              "title": {
+                "name": "Custom Alpha Game",
+                "publisher": "Nintendo",
+                "icon": null,
+                "banner": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "updates_ADDED_AT",
+      "prefer_multicontent": true,
+      "query": "query($page:Int!,$pageSize:Int!,$appIds:[String!]){apps(owned:true,appType:[UPDATE],groupByAppId:true,filter:{appId:{in:$appIds}},orderBy:{field:ADDED_AT,direction:DESC},page:$page,pageSize:$pageSize){total items{appId titleId displayVersion title{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 2,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 1,
+          "items": []
+        }
+      }
+    },
+    {
+      "name": "updates_RELEASE_DATE",
+      "prefer_multicontent": true,
+      "query": "query($page:Int!,$pageSize:Int!,$appIds:[String!]){apps(owned:true,appType:[UPDATE],groupByAppId:true,filter:{appId:{in:$appIds}},orderBy:{field:RELEASE_DATE,direction:DESC},page:$page,pageSize:$pageSize){total items{appId titleId displayVersion title{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 1,
+          "items": [
+            {
+              "appId": "0100000000AAA800",
+              "titleId": "0100000000AAAAA0",
+              "displayVersion": "fixture-131072",
+              "title": {
+                "name": "Custom Alpha Game",
+                "publisher": "Nintendo",
+                "icon": null,
+                "banner": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "updates_RELEASE_DATE",
+      "prefer_multicontent": true,
+      "query": "query($page:Int!,$pageSize:Int!,$appIds:[String!]){apps(owned:true,appType:[UPDATE],groupByAppId:true,filter:{appId:{in:$appIds}},orderBy:{field:RELEASE_DATE,direction:DESC},page:$page,pageSize:$pageSize){total items{appId titleId displayVersion title{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 2,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 1,
+          "items": []
+        }
+      }
+    },
+    {
+      "name": "dlc_NAME",
+      "prefer_multicontent": true,
+      "query": "query($page:Int!,$pageSize:Int!,$titleIds:[String!],$appIds:[String!]){apps(owned:true,appType:[DLC],groupByAppId:true,filter:{titleId:{in:$titleIds},appId:{notIn:$appIds}},orderBy:{field:NAME,direction:DESC},page:$page,pageSize:$pageSize){total items{appId titleId displayVersion downloadUrl downloadExtension titledb{name publisher banner(size:THUMB){url local}} title{name icon(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 1,
+          "items": [
+            {
+              "appId": "0100000000AA1001",
+              "titleId": "0100000000AAAAA0",
+              "displayVersion": "fixture-0",
+              "downloadUrl": "/api/download/00000000000000000000000000000003",
+              "downloadExtension": "nsp",
+              "titledb": {
+                "name": "Alpha Extra Levels",
+                "publisher": null,
+                "banner": null
+              },
+              "title": {
+                "name": "Custom Alpha Game",
+                "icon": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "dlc_NAME",
+      "prefer_multicontent": true,
+      "query": "query($page:Int!,$pageSize:Int!,$titleIds:[String!],$appIds:[String!]){apps(owned:true,appType:[DLC],groupByAppId:true,filter:{titleId:{in:$titleIds},appId:{notIn:$appIds}},orderBy:{field:NAME,direction:DESC},page:$page,pageSize:$pageSize){total items{appId titleId displayVersion downloadUrl downloadExtension titledb{name publisher banner(size:THUMB){url local}} title{name icon(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 2,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 1,
+          "items": []
+        }
+      }
+    },
+    {
+      "name": "dlc_ADDED_AT",
+      "prefer_multicontent": true,
+      "query": "query($page:Int!,$pageSize:Int!,$titleIds:[String!],$appIds:[String!]){apps(owned:true,appType:[DLC],groupByAppId:true,filter:{titleId:{in:$titleIds},appId:{notIn:$appIds}},orderBy:{field:ADDED_AT,direction:DESC},page:$page,pageSize:$pageSize){total items{appId titleId displayVersion downloadUrl downloadExtension titledb{name publisher banner(size:THUMB){url local}} title{name icon(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 1,
+          "items": [
+            {
+              "appId": "0100000000AA1001",
+              "titleId": "0100000000AAAAA0",
+              "displayVersion": "fixture-0",
+              "downloadUrl": "/api/download/00000000000000000000000000000003",
+              "downloadExtension": "nsp",
+              "titledb": {
+                "name": "Alpha Extra Levels",
+                "publisher": null,
+                "banner": null
+              },
+              "title": {
+                "name": "Custom Alpha Game",
+                "icon": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "dlc_ADDED_AT",
+      "prefer_multicontent": true,
+      "query": "query($page:Int!,$pageSize:Int!,$titleIds:[String!],$appIds:[String!]){apps(owned:true,appType:[DLC],groupByAppId:true,filter:{titleId:{in:$titleIds},appId:{notIn:$appIds}},orderBy:{field:ADDED_AT,direction:DESC},page:$page,pageSize:$pageSize){total items{appId titleId displayVersion downloadUrl downloadExtension titledb{name publisher banner(size:THUMB){url local}} title{name icon(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 2,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 1,
+          "items": []
+        }
+      }
+    },
+    {
+      "name": "dlc_RELEASE_DATE",
+      "prefer_multicontent": true,
+      "query": "query($page:Int!,$pageSize:Int!,$titleIds:[String!],$appIds:[String!]){apps(owned:true,appType:[DLC],groupByAppId:true,filter:{titleId:{in:$titleIds},appId:{notIn:$appIds}},orderBy:{field:RELEASE_DATE,direction:DESC},page:$page,pageSize:$pageSize){total items{appId titleId displayVersion downloadUrl downloadExtension titledb{name publisher banner(size:THUMB){url local}} title{name icon(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 1,
+          "items": [
+            {
+              "appId": "0100000000AA1001",
+              "titleId": "0100000000AAAAA0",
+              "displayVersion": "fixture-0",
+              "downloadUrl": "/api/download/00000000000000000000000000000003",
+              "downloadExtension": "nsp",
+              "titledb": {
+                "name": "Alpha Extra Levels",
+                "publisher": null,
+                "banner": null
+              },
+              "title": {
+                "name": "Custom Alpha Game",
+                "icon": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "dlc_RELEASE_DATE",
+      "prefer_multicontent": true,
+      "query": "query($page:Int!,$pageSize:Int!,$titleIds:[String!],$appIds:[String!]){apps(owned:true,appType:[DLC],groupByAppId:true,filter:{titleId:{in:$titleIds},appId:{notIn:$appIds}},orderBy:{field:RELEASE_DATE,direction:DESC},page:$page,pageSize:$pageSize){total items{appId titleId displayVersion downloadUrl downloadExtension titledb{name publisher banner(size:THUMB){url local}} title{name icon(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 2,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 1,
+          "items": []
+        }
+      }
+    },
+    {
+      "name": "search_NAME",
+      "prefer_multicontent": true,
+      "query": "query($page:Int!,$pageSize:Int!,$search:String){apps(owned:true,appType:[BASE],groupByAppId:true,search:$search,orderBy:{field:NAME,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 2,
+          "items": [
+            {
+              "appId": "0100000000010000",
+              "displayVersion": "0.9",
+              "latestOwnedVersion": null,
+              "titledb": {
+                "name": "Extracted Game",
+                "publisher": "Extracted Publisher",
+                "icon": null,
+                "banner": null
+              }
+            },
+            {
+              "appId": "0100000000AAAAA0",
+              "displayVersion": "fixture-0",
+              "latestOwnedVersion": {
+                "displayVersion": "fixture-131072"
+              },
+              "titledb": {
+                "name": "Custom Alpha Game",
+                "publisher": "Nintendo",
+                "icon": null,
+                "banner": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "search_NAME",
+      "prefer_multicontent": true,
+      "query": "query($page:Int!,$pageSize:Int!,$search:String){apps(owned:true,appType:[BASE],groupByAppId:true,search:$search,orderBy:{field:NAME,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 2,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 2,
+          "items": []
+        }
+      }
+    },
+    {
+      "name": "search_ADDED_AT",
+      "prefer_multicontent": true,
+      "query": "query($page:Int!,$pageSize:Int!,$search:String){apps(owned:true,appType:[BASE],groupByAppId:true,search:$search,orderBy:{field:ADDED_AT,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 2,
+          "items": [
+            {
+              "appId": "0100000000010000",
+              "displayVersion": "0.9",
+              "latestOwnedVersion": null,
+              "titledb": {
+                "name": "Extracted Game",
+                "publisher": "Extracted Publisher",
+                "icon": null,
+                "banner": null
+              }
+            },
+            {
+              "appId": "0100000000AAAAA0",
+              "displayVersion": "fixture-0",
+              "latestOwnedVersion": {
+                "displayVersion": "fixture-131072"
+              },
+              "titledb": {
+                "name": "Custom Alpha Game",
+                "publisher": "Nintendo",
+                "icon": null,
+                "banner": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "search_ADDED_AT",
+      "prefer_multicontent": true,
+      "query": "query($page:Int!,$pageSize:Int!,$search:String){apps(owned:true,appType:[BASE],groupByAppId:true,search:$search,orderBy:{field:ADDED_AT,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 2,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 2,
+          "items": []
+        }
+      }
+    },
+    {
+      "name": "search_RELEASE_DATE",
+      "prefer_multicontent": true,
+      "query": "query($page:Int!,$pageSize:Int!,$search:String){apps(owned:true,appType:[BASE],groupByAppId:true,search:$search,orderBy:{field:RELEASE_DATE,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 2,
+          "items": [
+            {
+              "appId": "0100000000010000",
+              "displayVersion": "0.9",
+              "latestOwnedVersion": null,
+              "titledb": {
+                "name": "Extracted Game",
+                "publisher": "Extracted Publisher",
+                "icon": null,
+                "banner": null
+              }
+            },
+            {
+              "appId": "0100000000AAAAA0",
+              "displayVersion": "fixture-0",
+              "latestOwnedVersion": {
+                "displayVersion": "fixture-131072"
+              },
+              "titledb": {
+                "name": "Custom Alpha Game",
+                "publisher": "Nintendo",
+                "icon": null,
+                "banner": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "search_RELEASE_DATE",
+      "prefer_multicontent": true,
+      "query": "query($page:Int!,$pageSize:Int!,$search:String){apps(owned:true,appType:[BASE],groupByAppId:true,search:$search,orderBy:{field:RELEASE_DATE,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 2,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 2,
+          "items": []
+        }
+      }
+    },
+    {
+      "name": "TITLE_QUERY",
+      "prefer_multicontent": true,
+      "query": "query($id:ID!){title(titleId:$id){name publisher intro description releaseDate category numberOfPlayers size rating region banner(size:CLIENT){url local} fullBanner:banner(size:SCREEN){url local} availableVersions{version releaseDate} screenshots(size:CLIENT){url local} full:screenshots(size:SCREEN){url local} base:apps(owned:true,appType:[BASE]){displayVersion downloadSize downloadUrl downloadExtension latestOwnedVersion{version displayVersion}} updates:apps(owned:true,appType:[UPDATE]){appVersion displayVersion downloadUrl downloadExtension} dlc:apps(owned:true,appType:[DLC]){appId appVersion downloadUrl downloadExtension titledb{name intro banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "title": {
+          "name": "Custom Alpha Game",
+          "publisher": "Nintendo",
+          "intro": null,
+          "description": null,
+          "releaseDate": null,
+          "category": null,
+          "numberOfPlayers": null,
+          "size": null,
+          "rating": null,
+          "region": null,
+          "banner": null,
+          "fullBanner": null,
+          "availableVersions": [],
+          "screenshots": null,
+          "full": null,
+          "base": [
+            {
+              "displayVersion": "fixture-0",
+              "downloadSize": 9000,
+              "downloadUrl": "/api/download/00000000000000000000000000000005",
+              "downloadExtension": "xci",
+              "latestOwnedVersion": {
+                "version": 131072,
+                "displayVersion": "fixture-131072"
+              }
+            }
+          ],
+          "updates": [
+            {
+              "appVersion": 65536,
+              "displayVersion": "fixture-65536",
+              "downloadUrl": "/api/download/00000000000000000000000000000002",
+              "downloadExtension": "nsp"
+            },
+            {
+              "appVersion": 131072,
+              "displayVersion": "fixture-131072",
+              "downloadUrl": "/api/download/00000000000000000000000000000005",
+              "downloadExtension": "xci"
+            }
+          ],
+          "dlc": [
+            {
+              "appId": "0100000000AA1001",
+              "appVersion": 0,
+              "downloadUrl": "/api/download/00000000000000000000000000000003",
+              "downloadExtension": "nsp",
+              "titledb": {
+                "name": "Alpha Extra Levels",
+                "intro": null,
+                "banner": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "TITLE_QUERY",
+      "prefer_multicontent": true,
+      "query": "query($id:ID!){title(titleId:$id){name publisher intro description releaseDate category numberOfPlayers size rating region banner(size:CLIENT){url local} fullBanner:banner(size:SCREEN){url local} availableVersions{version releaseDate} screenshots(size:CLIENT){url local} full:screenshots(size:SCREEN){url local} base:apps(owned:true,appType:[BASE]){displayVersion downloadSize downloadUrl downloadExtension latestOwnedVersion{version displayVersion}} updates:apps(owned:true,appType:[UPDATE]){appVersion displayVersion downloadUrl downloadExtension} dlc:apps(owned:true,appType:[DLC]){appId appVersion downloadUrl downloadExtension titledb{name intro banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 2,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "title": {
+          "name": "Custom Alpha Game",
+          "publisher": "Nintendo",
+          "intro": null,
+          "description": null,
+          "releaseDate": null,
+          "category": null,
+          "numberOfPlayers": null,
+          "size": null,
+          "rating": null,
+          "region": null,
+          "banner": null,
+          "fullBanner": null,
+          "availableVersions": [],
+          "screenshots": null,
+          "full": null,
+          "base": [
+            {
+              "displayVersion": "fixture-0",
+              "downloadSize": 9000,
+              "downloadUrl": "/api/download/00000000000000000000000000000005",
+              "downloadExtension": "xci",
+              "latestOwnedVersion": {
+                "version": 131072,
+                "displayVersion": "fixture-131072"
+              }
+            }
+          ],
+          "updates": [
+            {
+              "appVersion": 65536,
+              "displayVersion": "fixture-65536",
+              "downloadUrl": "/api/download/00000000000000000000000000000002",
+              "downloadExtension": "nsp"
+            },
+            {
+              "appVersion": 131072,
+              "displayVersion": "fixture-131072",
+              "downloadUrl": "/api/download/00000000000000000000000000000005",
+              "downloadExtension": "xci"
+            }
+          ],
+          "dlc": [
+            {
+              "appId": "0100000000AA1001",
+              "appVersion": 0,
+              "downloadUrl": "/api/download/00000000000000000000000000000003",
+              "downloadExtension": "nsp",
+              "titledb": {
+                "name": "Alpha Extra Levels",
+                "intro": null,
+                "banner": null
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "UPDATES_QUERY",
+      "prefer_multicontent": true,
+      "query": "query($page:Int!,$pageSize:Int!,$titleIds:[String!]){apps(owned:true,appType:[UPDATE],groupByAppId:true,filter:{titleId:{in:$titleIds}},page:$page,pageSize:$pageSize){total items{appId titleId appVersion}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 1,
+          "items": [
+            {
+              "appId": "0100000000AAA800",
+              "titleId": "0100000000AAAAA0",
+              "appVersion": 131072
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "UPDATES_QUERY",
+      "prefer_multicontent": true,
+      "query": "query($page:Int!,$pageSize:Int!,$titleIds:[String!]){apps(owned:true,appType:[UPDATE],groupByAppId:true,filter:{titleId:{in:$titleIds}},page:$page,pageSize:$pageSize){total items{appId titleId appVersion}}}",
+      "variables": {
+        "page": 2,
+        "pageSize": 2,
+        "appIds": [],
+        "titleIds": [
+          "0100000000AAAAA0"
+        ],
+        "search": "Game",
+        "id": "0100000000AAAAA0"
+      },
+      "data": {
+        "apps": {
+          "total": 1,
+          "items": []
+        }
+      }
+    }
+  ]
+}
