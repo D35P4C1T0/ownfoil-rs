@@ -169,3 +169,18 @@ The external validation gates and codec differences in the parity notes remain.
   solid/block round-trip coverage.
 - [x] 126 pinned-upstream GraphQL response comparisons, including relationship
   hydration depth and nested ordering.
+
+## Sphaira native Ownfoil client (2026-10-09)
+
+- [x] Protocol-1 root OPTIONS handshake and durable server identity.
+- [x] Configurable UDP LAN discovery using Sphaira's broadcast protocol.
+- [x] Released 1.0.8 catalog/title query shapes, owned-version grouping, filters,
+  sorting, installation links, and ranged downloads across libraries.
+- [x] Server-hosted artwork with cached source bytes and console-sized renditions.
+- [x] Public GraphQL shop access with admin authorization preserved.
+- [x] Exact client query fixtures, UDP/HTTP integration tests, setup instructions,
+  and Linux Compose discovery networking.
+- [ ] Physical Switch smoke test of discovery, browsing, and content installation.
+
+See [SPHAIRA.md](docs/SPHAIRA.md) for scope and validation. This adds native client
+compatibility; the earlier 2.4.1 parity target does not imply full 2.5 parity.

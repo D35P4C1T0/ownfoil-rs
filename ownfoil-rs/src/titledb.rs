@@ -423,19 +423,24 @@ impl TitleDb {
         else {
             return Vec::new();
         };
-        let Ok(rows) = statement.query_map([], |row| {
-            let mut record = serde_json::from_str::<serde_json::Value>(&row.get::<_, String>(4)?)
-                .unwrap_or_else(|_| serde_json::json!({}));
-            record["titleId"] = row.get::<_, String>(0)?.into();
-            record["iconUrl"] = row.get::<_, Option<String>>(1)?.into();
-            record["bannerUrl"] = row.get::<_, Option<String>>(2)?.into();
-            record["name"] = row.get::<_, Option<String>>(3)?.into();
-            record["source"] = "titledb".into();
-            Ok(record)
-        }) else {
+        let Ok(rows) = statement.query_map([], title_record) else {
             return Vec::new();
         };
         rows.filter_map(Result::ok).collect()
+    }
+
+    #[allow(clippy::significant_drop_tightening)] // Prepared statement borrows the locked connection.
+    pub async fn records_for_ids(
+        &self,
+        ids: &std::collections::BTreeSet<String>,
+    ) -> Vec<serde_json::Value> {
+        let guard = self.inner.lock().await;
+        let Ok(mut statement) =
+            guard.db.prepare("SELECT id,icon_url,banner_url,name,record FROM titles WHERE id=?1")
+        else {
+            return Vec::new();
+        };
+        ids.iter().filter_map(|id| statement.query_row([id], title_record).ok()).collect()
     }
 
     pub async fn entry_count(&self) -> usize {
@@ -513,8 +518,16 @@ async fn do_refresh_without_lock(inner: &Mutex<TitleDbInner>) -> Result<(), Titl
         ),
     };
 
-    let sources: Vec<Source> =
-        url_override.map_or_else(|| vec![blawar_raw], |url| vec![Source::OwnfoilZip { url }]);
+    let sources: Vec<Source> = url_override.map_or_else(
+        || vec![blawar_raw],
+        |url| {
+            if url.trim_end_matches('/').ends_with("/releases/download/titledb") {
+                vec![Source::OwnfoilRelease { url: url.trim_end_matches('/').into() }]
+            } else {
+                vec![Source::OwnfoilZip { url }]
+            }
+        },
+    );
 
     let merged = fetch_and_merge(&sources, &region, &lang, progress_tx.as_ref()).await?;
 
@@ -618,6 +631,7 @@ async fn fetch_and_merge(
         .iter()
         .map(|s| match s {
             Source::OwnfoilZip { .. } => "ownfoil_zip",
+            Source::OwnfoilRelease { .. } => "ownfoil_release",
             Source::BlawarRaw { url } => {
                 if url.contains("jsdelivr") {
                     "blawar_jsdelivr"
@@ -656,9 +670,21 @@ async fn fetch_and_merge(
     Ok(merged)
 }
 
+fn title_record(row: &rusqlite::Row<'_>) -> rusqlite::Result<serde_json::Value> {
+    let mut record = serde_json::from_str::<serde_json::Value>(&row.get::<_, String>(4)?)
+        .unwrap_or_else(|_| serde_json::json!({}));
+    record["titleId"] = row.get::<_, String>(0)?.into();
+    record["iconUrl"] = row.get::<_, Option<String>>(1)?.into();
+    record["bannerUrl"] = row.get::<_, Option<String>>(2)?.into();
+    record["name"] = row.get::<_, Option<String>>(3)?.into();
+    record["source"] = "titledb".into();
+    Ok(record)
+}
+
 #[derive(Debug, Clone)]
 enum Source {
     OwnfoilZip { url: String },
+    OwnfoilRelease { url: String },
     BlawarRaw { url: String },
 }
 
@@ -669,6 +695,12 @@ async fn fetch_source(
 ) -> Result<Vec<(String, TitleInfo)>, TitleDbError> {
     match source {
         Source::OwnfoilZip { url } => fetch_ownfoil_zip(url, region, lang).await,
+        Source::OwnfoilRelease { url } => {
+            let text = fetch_zstd_text(&format!("{url}/titles.{region}.{lang}.json.zst"))
+                .await?
+                .ok_or(TitleDbError::InvalidFormat)?;
+            parse_titles_json(&text)
+        }
         Source::BlawarRaw { url } => fetch_blawar_raw(url).await,
     }
 }
@@ -867,7 +899,32 @@ async fn fetch_artifacts_from_source(source: &Source) -> Result<TitleDbArtifacts
     match source {
         Source::OwnfoilZip { url } => fetch_ownfoil_zip_artifacts(url).await,
         Source::BlawarRaw { url } => fetch_blawar_raw_artifacts(url).await,
+        Source::OwnfoilRelease { url } => {
+            let versions = fetch_zstd_text(&format!("{url}/versions.json.zst")).await?;
+            let cnmts = fetch_zstd_text(&format!("{url}/cnmts.json.zst")).await?;
+            let languages = fetch_zstd_text(&format!("{url}/languages.json.zst")).await?;
+            parse_artifact_buffers(
+                versions.as_deref(),
+                None,
+                cnmts.as_deref(),
+                languages.as_deref(),
+            )
+        }
     }
+}
+
+async fn fetch_zstd_text(url: &str) -> Result<Option<String>, TitleDbError> {
+    let response = http_client().get(url).send().await?;
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(None);
+    }
+    let bytes = response.error_for_status()?.bytes().await?;
+    tokio::task::spawn_blocking(move || {
+        let decoded = zstd::stream::decode_all(bytes.as_ref())?;
+        Ok(Some(String::from_utf8(decoded)?))
+    })
+    .await
+    .map_err(|_| TitleDbError::BackgroundTask)?
 }
 
 async fn fetch_blawar_raw_artifacts(url: &str) -> Result<TitleDbArtifacts, TitleDbError> {
@@ -1681,6 +1738,43 @@ pub enum TitleDbError {
 #[allow(clippy::expect_used)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn compressed_release_loads_titles_and_rejects_truncated_frames() -> anyhow::Result<()> {
+        let json = br#"{"010067E01198A000":{"id":"010067E01198A000","name":"Biped","iconUrl":"https://example.test/biped.jpg"}}"#;
+        let encoded = zstd::stream::encode_all(&json[..], 1)?;
+        let mut truncated = encoded.clone();
+        truncated.pop();
+        let app = axum::Router::new()
+            .route(
+                "/titles.US.en.json.zst",
+                axum::routing::get(move || {
+                    let bytes = encoded.clone();
+                    async move { bytes }
+                }),
+            )
+            .route(
+                "/broken.zst",
+                axum::routing::get(move || {
+                    let bytes = truncated.clone();
+                    async move { bytes }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
+        let url = format!("http://{}", listener.local_addr()?);
+        let task = tokio::spawn(async move { axum::serve(listener, app).await });
+        let source = Source::OwnfoilRelease { url: url.clone() };
+        let titles = fetch_source(&source, "US", "en").await?;
+        assert_eq!(titles.len(), 1);
+        assert_eq!(titles[0].0, "010067E01198A000");
+        assert_eq!(titles[0].1.name.as_deref(), Some("Biped"));
+        assert_eq!(titles[0].1.icon_url.as_deref(), Some("https://example.test/biped.jpg"));
+        assert!(fetch_zstd_text(&format!("{url}/missing.zst")).await?.is_none());
+        assert!(fetch_zstd_text(&format!("{url}/broken.zst")).await.is_err());
+        assert!(fetch_artifacts_from_source(&source).await?.is_empty());
+        task.abort();
+        Ok(())
+    }
 
     #[test]
     fn parses_versions_json_and_txt() {

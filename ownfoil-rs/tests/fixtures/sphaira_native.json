@@ -1,0 +1,243 @@
+{
+  "source": "NaGaa95/sphaira@338348e74b6d278bc570a9be5373d25197bf6c8d sphaira/source/utils/ownfoil_api.cpp",
+  "cases": [
+    {
+      "name": "all_NAME",
+      "query": "query($page:Int!,$pageSize:Int!){apps(owned:true,appType:[BASE],groupByAppId:true,orderBy:{field:NAME,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 40,
+        "appIds": [],
+        "titleIds": [
+          "0100000000010000"
+        ],
+        "search": "Game",
+        "id": "0100000000010000"
+      }
+    },
+    {
+      "name": "all_ADDED_AT",
+      "query": "query($page:Int!,$pageSize:Int!){apps(owned:true,appType:[BASE],groupByAppId:true,orderBy:{field:ADDED_AT,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 40,
+        "appIds": [],
+        "titleIds": [
+          "0100000000010000"
+        ],
+        "search": "Game",
+        "id": "0100000000010000"
+      }
+    },
+    {
+      "name": "all_RELEASE_DATE",
+      "query": "query($page:Int!,$pageSize:Int!){apps(owned:true,appType:[BASE],groupByAppId:true,orderBy:{field:RELEASE_DATE,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 40,
+        "appIds": [],
+        "titleIds": [
+          "0100000000010000"
+        ],
+        "search": "Game",
+        "id": "0100000000010000"
+      }
+    },
+    {
+      "name": "new_NAME",
+      "query": "query($page:Int!,$pageSize:Int!,$appIds:[String!]){apps(owned:true,appType:[BASE],groupByAppId:true,filter:{appId:{notIn:$appIds}},orderBy:{field:NAME,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 40,
+        "appIds": [],
+        "titleIds": [
+          "0100000000010000"
+        ],
+        "search": "Game",
+        "id": "0100000000010000"
+      }
+    },
+    {
+      "name": "new_ADDED_AT",
+      "query": "query($page:Int!,$pageSize:Int!,$appIds:[String!]){apps(owned:true,appType:[BASE],groupByAppId:true,filter:{appId:{notIn:$appIds}},orderBy:{field:ADDED_AT,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 40,
+        "appIds": [],
+        "titleIds": [
+          "0100000000010000"
+        ],
+        "search": "Game",
+        "id": "0100000000010000"
+      }
+    },
+    {
+      "name": "new_RELEASE_DATE",
+      "query": "query($page:Int!,$pageSize:Int!,$appIds:[String!]){apps(owned:true,appType:[BASE],groupByAppId:true,filter:{appId:{notIn:$appIds}},orderBy:{field:RELEASE_DATE,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 40,
+        "appIds": [],
+        "titleIds": [
+          "0100000000010000"
+        ],
+        "search": "Game",
+        "id": "0100000000010000"
+      }
+    },
+    {
+      "name": "updates_NAME",
+      "query": "query($page:Int!,$pageSize:Int!,$appIds:[String!]){apps(owned:true,appType:[UPDATE],groupByAppId:true,filter:{appId:{in:$appIds}},orderBy:{field:NAME,direction:DESC},page:$page,pageSize:$pageSize){total items{appId titleId displayVersion title{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 40,
+        "appIds": [],
+        "titleIds": [
+          "0100000000010000"
+        ],
+        "search": "Game",
+        "id": "0100000000010000"
+      }
+    },
+    {
+      "name": "updates_ADDED_AT",
+      "query": "query($page:Int!,$pageSize:Int!,$appIds:[String!]){apps(owned:true,appType:[UPDATE],groupByAppId:true,filter:{appId:{in:$appIds}},orderBy:{field:ADDED_AT,direction:DESC},page:$page,pageSize:$pageSize){total items{appId titleId displayVersion title{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 40,
+        "appIds": [],
+        "titleIds": [
+          "0100000000010000"
+        ],
+        "search": "Game",
+        "id": "0100000000010000"
+      }
+    },
+    {
+      "name": "updates_RELEASE_DATE",
+      "query": "query($page:Int!,$pageSize:Int!,$appIds:[String!]){apps(owned:true,appType:[UPDATE],groupByAppId:true,filter:{appId:{in:$appIds}},orderBy:{field:RELEASE_DATE,direction:DESC},page:$page,pageSize:$pageSize){total items{appId titleId displayVersion title{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 40,
+        "appIds": [],
+        "titleIds": [
+          "0100000000010000"
+        ],
+        "search": "Game",
+        "id": "0100000000010000"
+      }
+    },
+    {
+      "name": "dlc_NAME",
+      "query": "query($page:Int!,$pageSize:Int!,$titleIds:[String!],$appIds:[String!]){apps(owned:true,appType:[DLC],groupByAppId:true,filter:{titleId:{in:$titleIds},appId:{notIn:$appIds}},orderBy:{field:NAME,direction:DESC},page:$page,pageSize:$pageSize){total items{appId titleId displayVersion downloadUrl downloadExtension titledb{name publisher banner(size:THUMB){url local}} title{name icon(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 40,
+        "appIds": [],
+        "titleIds": [
+          "0100000000010000"
+        ],
+        "search": "Game",
+        "id": "0100000000010000"
+      }
+    },
+    {
+      "name": "dlc_ADDED_AT",
+      "query": "query($page:Int!,$pageSize:Int!,$titleIds:[String!],$appIds:[String!]){apps(owned:true,appType:[DLC],groupByAppId:true,filter:{titleId:{in:$titleIds},appId:{notIn:$appIds}},orderBy:{field:ADDED_AT,direction:DESC},page:$page,pageSize:$pageSize){total items{appId titleId displayVersion downloadUrl downloadExtension titledb{name publisher banner(size:THUMB){url local}} title{name icon(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 40,
+        "appIds": [],
+        "titleIds": [
+          "0100000000010000"
+        ],
+        "search": "Game",
+        "id": "0100000000010000"
+      }
+    },
+    {
+      "name": "dlc_RELEASE_DATE",
+      "query": "query($page:Int!,$pageSize:Int!,$titleIds:[String!],$appIds:[String!]){apps(owned:true,appType:[DLC],groupByAppId:true,filter:{titleId:{in:$titleIds},appId:{notIn:$appIds}},orderBy:{field:RELEASE_DATE,direction:DESC},page:$page,pageSize:$pageSize){total items{appId titleId displayVersion downloadUrl downloadExtension titledb{name publisher banner(size:THUMB){url local}} title{name icon(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 40,
+        "appIds": [],
+        "titleIds": [
+          "0100000000010000"
+        ],
+        "search": "Game",
+        "id": "0100000000010000"
+      }
+    },
+    {
+      "name": "search_NAME",
+      "query": "query($page:Int!,$pageSize:Int!,$search:String){apps(owned:true,appType:[BASE],groupByAppId:true,search:$search,orderBy:{field:NAME,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 40,
+        "appIds": [],
+        "titleIds": [
+          "0100000000010000"
+        ],
+        "search": "Game",
+        "id": "0100000000010000"
+      }
+    },
+    {
+      "name": "search_ADDED_AT",
+      "query": "query($page:Int!,$pageSize:Int!,$search:String){apps(owned:true,appType:[BASE],groupByAppId:true,search:$search,orderBy:{field:ADDED_AT,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 40,
+        "appIds": [],
+        "titleIds": [
+          "0100000000010000"
+        ],
+        "search": "Game",
+        "id": "0100000000010000"
+      }
+    },
+    {
+      "name": "search_RELEASE_DATE",
+      "query": "query($page:Int!,$pageSize:Int!,$search:String){apps(owned:true,appType:[BASE],groupByAppId:true,search:$search,orderBy:{field:RELEASE_DATE,direction:DESC},page:$page,pageSize:$pageSize){total items{appId displayVersion latestOwnedVersion{displayVersion} titledb{name publisher icon(size:THUMB){url local} banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 40,
+        "appIds": [],
+        "titleIds": [
+          "0100000000010000"
+        ],
+        "search": "Game",
+        "id": "0100000000010000"
+      }
+    },
+    {
+      "name": "TITLE_QUERY",
+      "query": "query($id:ID!){title(titleId:$id){name publisher intro description releaseDate category numberOfPlayers size rating region banner(size:CLIENT){url local} fullBanner:banner(size:SCREEN){url local} availableVersions{version releaseDate} screenshots(size:CLIENT){url local} full:screenshots(size:SCREEN){url local} base:apps(owned:true,appType:[BASE]){displayVersion downloadSize downloadUrl downloadExtension latestOwnedVersion{version displayVersion}} updates:apps(owned:true,appType:[UPDATE]){appVersion displayVersion downloadUrl downloadExtension} dlc:apps(owned:true,appType:[DLC]){appId appVersion downloadUrl downloadExtension titledb{name intro banner(size:THUMB){url local}}}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 40,
+        "appIds": [],
+        "titleIds": [
+          "0100000000010000"
+        ],
+        "search": "Game",
+        "id": "0100000000010000"
+      }
+    },
+    {
+      "name": "UPDATES_QUERY",
+      "query": "query($page:Int!,$pageSize:Int!,$titleIds:[String!]){apps(owned:true,appType:[UPDATE],groupByAppId:true,filter:{titleId:{in:$titleIds}},page:$page,pageSize:$pageSize){total items{appId titleId appVersion}}}",
+      "variables": {
+        "page": 1,
+        "pageSize": 40,
+        "appIds": [],
+        "titleIds": [
+          "0100000000010000"
+        ],
+        "search": "Game",
+        "id": "0100000000010000"
+      }
+    }
+  ]
+}

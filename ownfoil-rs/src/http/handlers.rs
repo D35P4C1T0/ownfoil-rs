@@ -138,7 +138,7 @@ pub fn router(state: AppState) -> Router {
         warn!("governor config invalid; rate limiting disabled");
     }
     let app = Router::new()
-        .route("/", get(shop_root))
+        .route("/", get(shop_root).options(super::native::handshake))
         .route("/health", get(health))
         .route("/favicon.ico", get(favicon))
         .route("/robots.txt", get(robots))
@@ -151,6 +151,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/title/{title_id}/versions", get(title_versions))
         .route("/api/download/{*path}", get(download))
         .route("/api/get_game/{id}", get(download_by_id))
+        .route("/api/media/{title}/{kind}/{position}/{size}/{hash}", get(super::native::media))
+        .route("/api/settings/services", post(super::native::services_post))
         .route("/api/shop/icon/{title_id}", get(shop_icon))
         .route("/api/shop/banner/{title_id}", get(shop_banner))
         .route("/api/saves/list", get(saves_list))
@@ -708,6 +710,33 @@ async fn download(
 ) -> Result<Response, ApiError> {
     ensure_authorized(&state, &headers, session_token(&jar)).await?;
 
+    if path.len() == 32 && path.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        if let Some(storage) = &state.storage {
+            let token = path.clone();
+            let id = storage
+                .with_connection(move |conn| {
+                    use rusqlite::OptionalExtension;
+                    Ok(conn
+                        .query_row("SELECT id FROM files WHERE download_token=?1", [token], |row| {
+                            row.get::<_, usize>(0)
+                        })
+                        .optional()?)
+                })
+                .await
+                .map_err(|_| ApiError::Internal)?
+                .ok_or(ApiError::NotFound)?;
+            let file = state
+                .catalog
+                .read()
+                .await
+                .files()
+                .iter()
+                .find(|file| file.id == id)
+                .cloned()
+                .ok_or(ApiError::NotFound)?;
+            return serve_catalog_file(&state, file, &headers, peer).await;
+        }
+    }
     let decoded = percent_decode_str(&path).decode_utf8().map_err(|_| ApiError::InvalidPath)?;
     let sanitized = sanitize_relative_path(&decoded).map_err(|error| map_file_error(&error))?;
     let title =
@@ -769,6 +798,16 @@ async fn download_by_id(
             .cloned()
             .ok_or(ApiError::NotFound)?
     };
+    serve_catalog_file(&state, file, &headers, peer).await
+}
+
+async fn serve_catalog_file(
+    state: &AppState,
+    file: crate::catalog::ContentFile,
+    headers: &HeaderMap,
+    peer: Option<SocketAddr>,
+) -> Result<Response, ApiError> {
+    let id = file.id;
     let library_root = if file.library_root.as_os_str().is_empty() {
         &state.library_root
     } else {
@@ -780,7 +819,7 @@ async fn download_by_id(
     let log_ctx = peer.map(|ip| DownloadLogContext { ip, title: filename.clone() });
 
     let response =
-        match stream_with_range_support(library_root, &relative_path, &headers, log_ctx.as_ref())
+        match stream_with_range_support(library_root, &relative_path, headers, log_ctx.as_ref())
             .await
         {
             Ok(r) => r,
@@ -796,7 +835,7 @@ async fn download_by_id(
             }
         };
 
-    increment_download_throttled(&state, id, peer).await;
+    increment_download_throttled(state, id, peer).await;
 
     debug!(
         file_id = id,

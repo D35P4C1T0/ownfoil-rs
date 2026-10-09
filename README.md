@@ -14,6 +14,8 @@ Tinfoil, Aerofoil/CyberFoil, or Sphaira to download games.
   preview file organization, and clean up old updates.
 - **Track what you own:** TitleDB metadata, artwork, available updates and DLC,
   missing content, and collection completeness.
+- **Use Sphaira’s Ownfoil menu:** LAN discovery, catalog search and sorting, game
+  details, local artwork, and installation of selected games, updates, and DLC.
 - **Serve your shop:** public or private access, separate user permissions,
   encrypted Tinfoil shops, and resumable downloads.
 - **Work with NSP, NSZ, XCI, and XCZ:** identify content, compress or decompress
@@ -53,6 +55,29 @@ when upgrading. The library is writable for uploads and organization; set
 for port, directory, and first-start administrator options.
 
 View logs with `docker compose logs -f ownfoil`; stop with `docker compose down`.
+
+## Sphaira native client
+
+Use Sphaira **1.0.8 or newer**: open **Menu → Menus → Ownfoil** and choose
+**Discover local servers**, or add the server address manually. Private shops need
+an account with shop access. Public shops support anonymous catalog browsing.
+
+Discovery uses **UDP 8465** on the same local network. For Docker on Linux, use
+host networking so broadcast discovery reaches the server:
+
+```sh
+docker compose -f compose.yaml -f compose.discovery.yaml up --build -d
+```
+
+Host networking uses HTTP port 8465 directly; `OWNFOIL_PORT` port mapping does not
+apply. Docker Desktop and routed networks may require entering the HTTP address
+manually. Manual connections work with the standard Compose setup. Discovery can
+be disabled in Settings; the Sphaira client toggle controls the legacy folder
+browser, independently of the native Ownfoil API.
+
+Artwork is fetched by the server on first request and cached in `data/media` in
+sizes suited to the console. The Switch requests artwork from this server.
+See [native client compatibility](docs/SPHAIRA.md) for protocol details and testing.
 
 ## Other ways to run
 

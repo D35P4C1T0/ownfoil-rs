@@ -1007,10 +1007,29 @@ mod tests {
                 .await;
             response.assert_status_ok();
             let actual = response.json::<Value>();
-            if actual.get("errors").is_some() || actual["data"] != case["data"] {
+            let mut expected = case["data"].clone();
+            // Ownfoil 2.5 filters owned rows before grouping, fixing installation links
+            // that previously selected the newest known but unavailable version.
+            if case["query"]
+                == "{ apps(groupByAppId:true, owned:true) { total items { id appId appVersion owned } } }"
+                || case["query"]
+                    == "{ apps(groupByAppId:true, filter:{owned:true, appVersion:{gte:65536}}) { total items { id appId appVersion owned } } }"
+            {
+                for item in expected["apps"]["items"].as_array_mut().into_iter().flatten() {
+                    if item["id"] == "5" {
+                        item["id"] = "4".into();
+                        item["appVersion"] = 0.into();
+                    }
+                    if item["id"] == "3" {
+                        item["id"] = "2".into();
+                        item["appVersion"] = 65536.into();
+                    }
+                }
+            }
+            if actual.get("errors").is_some() || actual["data"] != expected {
                 failures.push(format!(
                     "case {index} ({name}): {}\nexpected: {}\nactual: {}",
-                    case["query"], case["data"], actual
+                    case["query"], expected, actual
                 ));
             }
         }
@@ -1114,8 +1133,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn graphql_requires_identity_on_public_shops_and_respects_roles_and_etags() -> Result<()>
-    {
+    async fn graphql_allows_public_shoppers_and_respects_roles_and_etags() -> Result<()> {
         let auth = AuthSettings::from_users(vec![AuthUser {
             username: "admin".into(),
             password: "secret".into(),
@@ -1134,8 +1152,8 @@ mod tests {
             sessions.clone(),
         );
         state.settings.write().await.shop.public = true;
-        let server = TestServer::new(router(state))?;
-        server.get("/api/graphql").await.assert_status_unauthorized();
+        let server = TestServer::new(router(state.clone()))?;
+        server.get("/api/graphql").await.assert_status_ok();
         let cookie = format!("ownfoil_session={token}");
         let query = serde_json::json!({"query":"{ files { total } tasks { id } workers { id } }"});
         let response = server.post("/api/graphql").add_header("Cookie", &cookie).json(&query).await;
@@ -1161,6 +1179,7 @@ mod tests {
         assert!(mutation.json::<Value>()["errors"].is_array());
         assert_eq!(mutation.header("cache-control"), "no-store");
         sessions.remove(&token);
+        state.settings.write().await.shop.public = false;
         server
             .post("/api/graphql")
             .add_header("Cookie", &cookie)
@@ -1654,4 +1673,5 @@ mod tests {
             assert!(handler.contains("finally{e.target.disabled=false}"));
         }
     }
+    include!("native_tests.rs");
 }

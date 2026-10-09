@@ -1,5 +1,30 @@
 # Changelog
 
+## v0.4.0 - 2026-10-09
+
+### Sphaira support
+
+- Add Sphaira 1.0.8 native Ownfoil API support: connection handshake, durable
+  identity, configurable UDP LAN discovery, catalog and title queries, owned
+  version selection, and token downloads across multiple libraries.
+- Serve cached artwork with console-sized renditions and enable anonymous
+  GraphQL shop browsing for public shops while preserving admin permissions.
+- Read consolidated TitleDB metadata from upstream's Zstandard-compressed
+  release assets, including regional titles absent from the US eShop catalog.
+- Load app-list metadata through indexed title lookups instead of rebuilding
+  the entire global TitleDB for each Sphaira shop page. On the tested library
+  with 44 games and 63,323 metadata entries, the shop query dropped from about
+  19.5 seconds to 0.10 seconds.
+- Add native client contract tests, updated setup instructions, and a Linux
+  Compose host-network override for discovery.
+
+### Validation
+
+- Verified LAN discovery, connection, names, icons, and shop browsing with
+  Sphaira on a physical Switch. Console installation remains unverified.
+- 138 automated tests pass, with three existing optional tests ignored; strict
+  CI Clippy, formatting, and Compose discovery configuration checks pass.
+
 ## v0.3.0 - 2026-07-14
 
 This integration-preview release ports the pinned Ownfoil feature set to Rust.

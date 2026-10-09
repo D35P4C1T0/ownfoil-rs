@@ -19,6 +19,7 @@ mod auth;
 mod catalog;
 mod config;
 mod content;
+mod discovery;
 mod http;
 mod identifier;
 mod keys;
@@ -138,7 +139,7 @@ async fn main() -> anyhow::Result<()> {
     *state.catalog.write().await = Catalog::from_files(files);
     crate::tasks::start(state.clone()).await?;
     crate::tasks::queue_pipeline(&state).await?;
-    let app = router(state);
+    let app = router(state.clone());
     let listener = TcpListener::bind(config.bind)
         .await
         .with_context(|| format!("failed to bind {}", config.bind))?;
@@ -155,15 +156,18 @@ async fn main() -> anyhow::Result<()> {
         );
     }
 
+    let discovery = crate::discovery::start(state.settings.clone(), listener.local_addr()?);
     info!(bind = %config.bind, "ownfoil-rs listening");
 
-    serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
+    let result = serve(listener, app.into_make_service_with_connect_info::<SocketAddr>())
         .with_graceful_shutdown(async {
             shutdown_signal().await;
             info!("shutting down gracefully");
         })
         .await
-        .context("server exited with error")
+        .context("server exited with error");
+    discovery.abort();
+    result
 }
 
 async fn shutdown_signal() {

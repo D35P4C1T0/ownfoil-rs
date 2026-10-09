@@ -85,8 +85,7 @@ impl Default for TitleDbConfig {
             language: "en".to_string(),
             refresh_interval: "24h".to_string(),
             url_override: Some(
-                "https://nightly.link/a1ex4/ownfoil/workflows/region_titles/master/titledb.zip"
-                    .to_string(),
+                "https://github.com/a1ex4/ownfoil/releases/download/titledb".to_string(),
             ),
         }
     }

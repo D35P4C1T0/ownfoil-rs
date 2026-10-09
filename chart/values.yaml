@@ -2,7 +2,7 @@ replicaCount: 1
 
 image:
   repository: ghcr.io/d35p4c1t0/ownfoil-rs
-  tag: v0.3.0
+  tag: v0.4.0
   pullPolicy: IfNotPresent
 
 service:

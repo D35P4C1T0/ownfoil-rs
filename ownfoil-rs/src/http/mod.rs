@@ -9,6 +9,7 @@ mod error;
 mod graph_data;
 mod graphql;
 mod handlers;
+mod native;
 mod responses;
 mod settings;
 mod state;

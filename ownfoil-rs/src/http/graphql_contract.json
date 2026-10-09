@@ -21,6 +21,10 @@
         "type": "[String!]",
         "args": [],
         "default": null
+      },
+      {
+        "name": "notIn",
+        "type": "[String!]"
       }
     ]
   },
@@ -999,6 +1003,10 @@
         "type": "String",
         "args": [],
         "default": null
+      },
+      {
+        "name": "displayVersion",
+        "type": "String"
       }
     ]
   },
@@ -1114,6 +1122,30 @@
         "type": "Title",
         "args": [],
         "description": "Titledb entry keyed by this app's app_id (the DLC's own metadata for\nDLC apps, the parent title's metadata for BASE apps, often null for\nUPDATE apps not present in titledb). Not hydrated for apps reached as a\nfile's back-link under `apps { files { apps } }`."
+      },
+      {
+        "name": "displayVersion",
+        "type": "String"
+      },
+      {
+        "name": "latestOwnedVersion",
+        "type": "AppVersion"
+      },
+      {
+        "name": "downloadUrl",
+        "type": "String"
+      },
+      {
+        "name": "downloadSize",
+        "type": "BigInt"
+      },
+      {
+        "name": "downloadExtension",
+        "type": "String"
+      },
+      {
+        "name": "addedAt",
+        "type": "String"
       }
     ]
   },
@@ -1266,9 +1298,16 @@
       },
       {
         "name": "screenshots",
-        "type": "[String!]",
-        "args": [],
-        "default": null
+        "type": "[Image!]",
+        "args": [
+          {
+            "name": "size",
+            "type": "ImageSize!",
+            "default": "CLIENT"
+          }
+        ],
+        "default": null,
+        "description": "Screenshots served by the library server in the requested rendition."
       },
       {
         "name": "size",
@@ -1333,6 +1372,28 @@
           }
         ],
         "description": "The base, update and DLC apps ownfoil tracks for this title - including\nunowned ones, which is what makes \"what am I missing\" answerable. Null when\nnot hydrated on this path or not exposed to this role."
+      },
+      {
+        "name": "icon",
+        "type": "Image",
+        "args": [
+          {
+            "name": "size",
+            "type": "ImageSize!",
+            "default": "CLIENT"
+          }
+        ]
+      },
+      {
+        "name": "banner",
+        "type": "Image",
+        "args": [
+          {
+            "name": "size",
+            "type": "ImageSize!",
+            "default": "CLIENT"
+          }
+        ]
       }
     ]
   },
@@ -1723,6 +1784,50 @@
         "type": "LibraryStats!",
         "args": [],
         "description": "Library-wide aggregates for dashboards. Every field is computed only when\nselected, so asking for one count does not pay for the others. File-level\nfigures are admin only and read zero for other roles."
+      }
+    ]
+  },
+  {
+    "name": "ImageSize",
+    "kind": "enum",
+    "fields": [
+      {
+        "name": "ORIGINAL"
+      },
+      {
+        "name": "THUMB"
+      },
+      {
+        "name": "CLIENT"
+      },
+      {
+        "name": "SCREEN"
+      }
+    ]
+  },
+  {
+    "name": "Image",
+    "kind": "object",
+    "fields": [
+      {
+        "name": "url",
+        "type": "String!"
+      },
+      {
+        "name": "size",
+        "type": "ImageSize!"
+      },
+      {
+        "name": "local",
+        "type": "Boolean!"
+      },
+      {
+        "name": "width",
+        "type": "Int"
+      },
+      {
+        "name": "height",
+        "type": "Int"
       }
     ]
   }

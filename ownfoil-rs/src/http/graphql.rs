@@ -51,7 +51,10 @@ fn input_value(field: &Value) -> InputValue {
     if let Some(value) = field.get("default") {
         if !value.is_null() {
             if let Ok(mut value) = GqlValue::from_json(value.clone()) {
-                if matches!(field["type"].as_str(), Some("OrderField!" | "OrderDirection!")) {
+                if matches!(
+                    field["type"].as_str(),
+                    Some("OrderField!" | "OrderDirection!" | "ImageSize!")
+                ) {
                     if let GqlValue::String(name) = value {
                         value = GqlValue::Enum(Name::new(name));
                     }
@@ -258,6 +261,9 @@ async fn resolve(
     {
         return Ok(Value::Null);
     }
+    if owner == "Title" && matches!(field, "icon" | "banner" | "screenshots") {
+        return Ok(super::native::images(parent, field, args));
+    }
     match (owner,field) {
         ("Title","apps")=>{
             let selected = select(data.apps.iter().filter(|a|a["titleId"]==parent["titleId"]).cloned().collect(),args,"App",data,false);
@@ -272,7 +278,7 @@ async fn resolve(
         ("App","title")=>Ok(mark(data.title(&parent["titleId"]), "_shallow")),
         ("App","versions")=>{
             let id=if parent["appType"]=="BASE" {format!("{}800",parent["titleId"].as_str().unwrap_or_default().get(..13).unwrap_or_default())}else{parent["appId"].as_str().unwrap_or_default().into()};
-            let mut rows=data.apps.iter().filter(|a|a["appId"]==id).map(|a|json!({"version":a["appVersion"],"owned":a["owned"],"releaseDate":a["releaseDate"]})).collect::<Vec<_>>();rows.sort_by_key(|v|v["version"].as_u64());Ok(json!(rows))
+            let mut rows=data.apps.iter().filter(|a|a["appId"]==id).map(|a|json!({"version":a["appVersion"],"owned":a["owned"],"releaseDate":a["releaseDate"],"displayVersion":a["displayVersion"]})).collect::<Vec<_>>();rows.sort_by_key(|v|v["version"].as_u64());Ok(json!(rows))
         }
         ("App","files")=>if data.can_admin {Ok(select(data.files.iter().filter(|f|parent["_fileIds"].as_array().is_some_and(|ids|ids.contains(&f["id"]))).cloned().map(|row| mark(row,"_backlink")).collect(),args,"File",data,false))}else{Ok(Value::Null)},
         ("File","apps")=>Ok(select(data.apps.iter().filter(|a|a["_fileIds"].as_array().is_some_and(|ids|ids.contains(&parent["id"]))).cloned().map(|row| { let row = mark(row,"_filesUnavailable"); if parent["_backlink"] == true { mark(row,"_shallow") } else { row } }).collect(),args,"App",data,false)),
@@ -409,7 +415,7 @@ pub async fn get(
     headers: HeaderMap,
     Query(params): Query<std::collections::HashMap<String, String>>,
 ) -> Result<Response, ApiError> {
-    graph_access(&state, &headers, &jar)?;
+    graph_access(&state, &headers, &jar).await?;
     let Some(query) = params.get("query") else {
         return Ok(axum::response::Html(
             async_graphql::http::GraphiQLSource::build().endpoint("/api/graphql").finish(),
@@ -434,7 +440,7 @@ async fn dispatch(
     mut request: Request,
     is_get: bool,
 ) -> Result<Response, ApiError> {
-    let (can_admin, can_shop) = graph_access(&state, &headers, &jar)?;
+    let (can_admin, can_shop) = graph_access(&state, &headers, &jar).await?;
     let mutation = async_graphql_parser::parse_query(&request.query).is_ok_and(|doc| {
         doc.operations.iter().any(|(name, op)| {
             request
@@ -452,7 +458,24 @@ async fn dispatch(
     if mutation {
         super::handlers::ensure_same_origin(&headers)?;
     }
-    let data = GraphData::load(&state, can_admin).await.map_err(|error| {
+    // Only direct app roots can use a reduced metadata snapshot. Full title
+    // searches, statistics and fragment roots retain the complete catalogue.
+    let apps_only = request.parsed_query().is_ok_and(|doc| {
+        doc.operations.iter().all(|(_, op)| {
+            op.node.ty == async_graphql_parser::types::OperationType::Query
+                && !op.node.selection_set.node.items.is_empty()
+                && op.node.selection_set.node.items.iter().all(|selection| {
+                    matches!(&selection.node, async_graphql_parser::types::Selection::Field(field)
+                        if matches!(field.node.name.node.as_str(), "apps" | "app"))
+                })
+        })
+    });
+    let data = if apps_only {
+        GraphData::load_apps(&state, can_admin).await
+    } else {
+        GraphData::load(&state, can_admin).await
+    }
+    .map_err(|error| {
         tracing::error!(%error,"GraphQL snapshot failed");
         ApiError::Internal
     })?;
@@ -485,7 +508,7 @@ async fn dispatch(
     Ok(response)
 }
 
-fn graph_access(
+async fn graph_access(
     state: &AppState,
     headers: &HeaderMap,
     jar: &CookieJar,
@@ -493,17 +516,20 @@ fn graph_access(
     if !state.auth.is_enabled() {
         return Ok((true, true));
     }
+    let public = state.settings.read().await.shop.public;
     let username = super::handlers::session_token(jar)
         .and_then(|token| state.sessions.get(token))
         .or_else(|| {
             extract_basic_auth(headers).and_then(|(name, password)| {
                 state.auth.is_authorized(&name, &password).then_some(name)
             })
-        })
-        .ok_or(ApiError::Unauthorized)?;
+        });
+    let Some(username) = username else {
+        return if public { Ok((false, true)) } else { Err(ApiError::Unauthorized) };
+    };
     let roles = state.auth.roles(&username).ok_or(ApiError::Unauthorized)?;
-    if !roles.admin_access && !roles.shop_access {
+    if !roles.admin_access && !roles.shop_access && !public {
         return Err(ApiError::Forbidden);
     }
-    Ok((roles.admin_access, roles.shop_access))
+    Ok((roles.admin_access, roles.shop_access || public))
 }

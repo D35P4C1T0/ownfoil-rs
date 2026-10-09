@@ -1,0 +1,6 @@
+# Linux host networking is required for LAN broadcast discovery.
+# Usage: docker compose -f compose.yaml -f compose.discovery.yaml up --build -d
+services:
+  ownfoil:
+    network_mode: host
+    ports: !reset []

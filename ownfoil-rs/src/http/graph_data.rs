@@ -14,10 +14,25 @@ pub struct GraphData {
     pub can_admin: bool,
 }
 impl GraphData {
-    #[allow(clippy::too_many_lines)] // One snapshot keeps related resolver data consistent.
     pub async fn load(state: &AppState, can_admin: bool) -> anyhow::Result<Self> {
+        Self::load_scoped(state, can_admin, false).await
+    }
+    pub async fn load_apps(state: &AppState, can_admin: bool) -> anyhow::Result<Self> {
+        // The storage-free fallback discovers synthetic apps while hydrating
+        // TitleDB, so it still needs the complete metadata snapshot.
+        Self::load_scoped(state, can_admin, state.storage.is_some()).await
+    }
+    #[allow(clippy::too_many_lines)]
+    async fn load_scoped(
+        state: &AppState,
+        can_admin: bool,
+        apps_only: bool,
+    ) -> anyhow::Result<Self> {
         let mut data = Self { can_admin, ..Self::default() };
-        data.titles = state.titledb.records().await;
+        if !apps_only {
+            data.titles = state.titledb.records().await;
+        }
+        let mut title_overrides = Vec::new();
         let files = state.catalog.read().await.files().to_vec();
         let mut links = BTreeMap::<String, Vec<String>>::new();
         let mut stored_titles = Vec::new();
@@ -39,8 +54,8 @@ impl GraphData {
                         }Ok(Value::Object(value))
                     })?;Ok(rows.collect::<Result<Vec<_>,_>>()?)
                 }
-                Ok((query(conn,"SELECT a.id,t.title_id AS titleId,a.app_id AS appId,CAST(a.app_version AS INTEGER) AS appVersion,a.app_type AS appType,a.owned FROM apps a JOIN titles t ON a.title_id=t.id")?,
-                    query(conn,"SELECT id,library_id AS libraryId,download_count AS downloadCount,identification_type AS identificationType,identification_error AS identificationError,identification_attempts AS identificationAttempts,nb_content AS nbContent,organized,signature_valid AS signatureValid,hash_valid AS hashValid,hash_modified AS hashModified,verification_error AS verificationError,verified_at AS verifiedAt,mtime,added_at AS addedAt FROM files")?,
+                Ok((query(conn,"SELECT a.id,t.title_id AS titleId,a.app_id AS appId,CAST(a.app_version AS INTEGER) AS appVersion,a.app_type AS appType,a.display_version AS displayVersion,a.owned FROM apps a JOIN titles t ON a.title_id=t.id")?,
+                    query(conn,"SELECT id,download_token AS downloadToken,library_id AS libraryId,download_count AS downloadCount,identification_type AS identificationType,identification_error AS identificationError,identification_attempts AS identificationAttempts,nb_content AS nbContent,organized,signature_valid AS signatureValid,hash_valid AS hashValid,hash_modified AS hashModified,verification_error AS verificationError,verified_at AS verifiedAt,mtime,added_at AS addedAt FROM files")?,
                     query(conn,"SELECT app_id,file_id FROM app_files")?,query(conn,"SELECT title_id,record,'extract' AS source FROM extracted_title_overrides UNION ALL SELECT title_id,record,'custom' AS source FROM title_overrides")?,
                     query(conn,"SELECT title_id AS titleId,have_base AS haveBase,up_to_date AS upToDate,complete FROM titles")?))
             }).await?;
@@ -90,26 +105,7 @@ impl GraphData {
                 .into();
                 data.files.push(value);
             }
-            for row in overrides {
-                let id = row["title_id"].as_str().unwrap_or_default();
-                if let Ok(Value::Object(record)) =
-                    serde_json::from_str::<Value>(row["record"].as_str().unwrap_or("{}"))
-                {
-                    if let Some(title) = data.titles.iter_mut().find(|t| t["titleId"] == id) {
-                        for (key, value) in record {
-                            if !value.is_null() {
-                                title[key] = value;
-                            }
-                        }
-                        title["source"] = row["source"].clone();
-                    } else {
-                        let mut title = Value::Object(record);
-                        title["titleId"] = id.into();
-                        title["source"] = row["source"].clone();
-                        data.titles.push(title);
-                    }
-                }
-            }
+            title_overrides = overrides;
             data.tasks = crate::tasks::list(storage).await?;
             data.workers = crate::tasks::workers(state).await?;
         } else {
@@ -137,6 +133,36 @@ impl GraphData {
                         continue;
                     }
                     data.apps.push(json!({"id":id,"titleId":identity.title_id,"appId":identity.app_id,"appVersion":identity.version,"appType":match identity.kind {crate::catalog::ContentKind::Update=>"UPDATE",crate::catalog::ContentKind::Dlc=>"DLC",_=>"BASE"},"owned":true}));
+                }
+            }
+        }
+        if apps_only {
+            let ids = data
+                .apps
+                .iter()
+                .flat_map(|app| ["titleId", "appId"].map(|key| app[key].as_str()))
+                .flatten()
+                .map(str::to_string)
+                .collect::<BTreeSet<_>>();
+            data.titles = state.titledb.records_for_ids(&ids).await;
+        }
+        for row in title_overrides {
+            let id = row["title_id"].as_str().unwrap_or_default();
+            if let Ok(Value::Object(record)) =
+                serde_json::from_str::<Value>(row["record"].as_str().unwrap_or("{}"))
+            {
+                if let Some(title) = data.titles.iter_mut().find(|t| t["titleId"] == id) {
+                    for (key, value) in record {
+                        if !value.is_null() {
+                            title[key] = value;
+                        }
+                    }
+                    title["source"] = row["source"].clone();
+                } else {
+                    let mut title = Value::Object(record);
+                    title["titleId"] = id.into();
+                    title["source"] = row["source"].clone();
+                    data.titles.push(title);
                 }
             }
         }
@@ -183,6 +209,7 @@ impl GraphData {
                 links.get(app["id"].as_str().unwrap_or_default()).cloned().unwrap_or_default()
             );
         }
+        hydrate_downloads(&mut data);
         for title in &mut data.titles {
             let id = title["titleId"].as_str().unwrap_or_default();
             let apps = data.apps.iter().filter(|a| a["titleId"] == id).collect::<Vec<_>>();
@@ -317,6 +344,7 @@ pub fn matches(value: &Value, filter: &Value) -> bool {
                 "in" => {
                     wanted.as_array().is_some_and(|list| list.is_empty() || list.contains(&actual))
                 }
+                "notIn" => wanted.as_array().is_some_and(|list| !list.contains(&actual)),
                 "gte" => actual.as_f64().zip(wanted.as_f64()).is_some_and(|(a, b)| a >= b),
                 "lte" => actual.as_f64().zip(wanted.as_f64()).is_some_and(|(a, b)| a <= b),
                 "has" => actual.as_array().is_some_and(|list| list.contains(wanted)),
@@ -372,7 +400,11 @@ pub fn select(
         if kind == "Title" && args["owned"] != true && row["_catalogue"] == false {
             return false;
         }
-        if !grouped && args["owned"].as_bool().is_some_and(|wanted| wanted != owned) {
+        if [args["owned"].as_bool(), args["filter"]["owned"].as_bool()]
+            .into_iter()
+            .flatten()
+            .any(|wanted| (!grouped || wanted) && wanted != owned)
+        {
             return false;
         }
         if !matches(row, &row_filter) {
@@ -462,7 +494,7 @@ pub fn select(
         ("Title" | "App", "RELEASE_DATE") => "releaseDate",
         ("File", "RELEASE_DATE") => "mtime",
         ("File", "DOWNLOAD_COUNT") => "downloadCount",
-        ("File", "ADDED_AT") => "addedAt",
+        ("File" | "App", "ADDED_AT") => "addedAt",
         ("App", "VERSION") => "appVersion",
         _ => default_key,
     };
@@ -531,6 +563,72 @@ pub fn select(
     json!({"total":total,"items":rows.into_iter().skip(page.saturating_sub(1).saturating_mul(size)).take(size).collect::<Vec<_>>()})
 }
 
+/// Project installation links without exposing filesystem paths to shop clients.
+fn hydrate_downloads(data: &mut GraphData) {
+    for app in &mut data.apps {
+        let mut copies = data
+            .files
+            .iter()
+            .filter(|file| app["_fileIds"].as_array().is_some_and(|ids| ids.contains(&file["id"])))
+            .collect::<Vec<_>>();
+        copies.sort_by_key(|file| {
+            (
+                matches!(
+                    file["verificationStatus"].as_str(),
+                    Some("CORRUPT" | "SIGNATURE_FAILED" | "MODIFIED")
+                ),
+                file["multicontent"] == true,
+                file["identificationType"] != "cnmt",
+                verification_rank(file["verificationStatus"].as_str().unwrap_or("UNVERIFIED")),
+                file["compressed"] != true,
+                file["organized"] != true,
+                file["addedAt"].is_null(),
+                file["addedAt"].as_str().unwrap_or_default().to_string(),
+                file["id"].as_str().and_then(|id| id.parse::<u64>().ok()).unwrap_or(0),
+            )
+        });
+        app["addedAt"] = copies
+            .iter()
+            .filter_map(|file| file["addedAt"].as_str())
+            .max()
+            .map_or(Value::Null, |v| json!(v));
+        if let Some(file) = copies.first() {
+            app["downloadUrl"] = file["downloadToken"].as_str().map_or_else(
+                || json!(format!("/api/get_game/{}", file["id"].as_str().unwrap_or_default())),
+                |token| json!(format!("/api/download/{token}")),
+            );
+            app["downloadSize"] = file["size"].clone();
+            app["downloadExtension"] = file["extension"].clone();
+        }
+    }
+    let snapshot = data.apps.clone();
+    for app in &mut data.apps {
+        let latest = snapshot
+            .iter()
+            .filter(|other| {
+                other["owned"] == true
+                    && if app["appType"] == "BASE" {
+                        other["titleId"] == app["titleId"] && other["appType"] == "UPDATE"
+                    } else {
+                        other["appId"] == app["appId"]
+                    }
+            })
+            .max_by_key(|other| other["appVersion"].as_u64());
+        app["latestOwnedVersion"] = latest.map_or(Value::Null, |other| json!({"version":other["appVersion"],"owned":true,"releaseDate":other["releaseDate"],"displayVersion":other["displayVersion"]}));
+    }
+}
+fn verification_rank(status: &str) -> u8 {
+    match status {
+        "VALID" => 0,
+        "REPACK" => 1,
+        "MODIFIED" => 5,
+        "SIGNATURE_OK" => 2,
+        "UNVERIFIED" => 3,
+        "SIGNATURE_FAILED" => 4,
+        _ => 6,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -572,16 +670,16 @@ mod tests {
     }
 
     #[test]
-    fn grouped_ownership_is_anded_after_row_filters() {
+    fn grouped_owned_queries_choose_latest_owned_version() {
         let data = GraphData::default();
         for ownership in [json!({"owned":true}), json!({"filter":{"owned":true}})] {
             let mut args = ownership;
             args["groupByAppId"] = json!(true);
             let rows = select(app_rows(), &args, "App", &data, false);
-            assert_eq!(ids(&rows, "id"), vec![json!("20")]);
+            assert_eq!(ids(&rows, "id"), vec![json!("30")]);
             assert_eq!(rows[0]["owned"], true);
-            assert_eq!(rows[0]["releaseDate"], "2024");
-            assert_eq!(rows[0]["_fileIds"], json!(["2"]));
+            assert_eq!(rows[0]["releaseDate"], "2020");
+            assert_eq!(rows[0]["_fileIds"], json!(["1"]));
         }
         for grouped in [false, true] {
             for (owned, filtered) in [(true, false), (false, true)] {
@@ -613,7 +711,7 @@ mod tests {
     #[test]
     fn grouped_default_and_fallback_order_use_app_id() {
         let data = GraphData::default();
-        for field in ["ID", "SIZE", "ADDED_AT", "DOWNLOAD_COUNT"] {
+        for field in ["ID", "SIZE", "DOWNLOAD_COUNT"] {
             let rows = select(
                 app_rows(),
                 &json!({"groupByAppId":true,"orderBy":{"field":field}}),

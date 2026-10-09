@@ -53,7 +53,7 @@
         url.textContent=address;
         urls.push(url);
         const instructions=document.createElement('p');
-        instructions.textContent=name==='tinfoil'?'Open File Browser, add a source, then enter the protocol, host and port from this address.':name==='sphaira'?'Open the shop settings and add this address as a shop source.':'Add this address in your client’s shop settings.';
+        instructions.textContent=name==='tinfoil'?'Open File Browser, add a source, then enter the protocol, host and port from this address.':name==='sphaira'?'In Sphaira 1.0.8 or newer, open Menu → Menus → Ownfoil, then Discover local servers. You can also add a server manually using this address. The Sphaira toggle controls legacy folder browsing; the Ownfoil menu uses shop access permissions.':'Add this address in your client’s shop settings.';
         const credentials=document.createElement('p');
         credentials.textContent=settings.public?'Public shop: no shop credentials required.':'Enter the username and password of an account with shop access.';
         section.append(title,status,url,instructions,credentials);

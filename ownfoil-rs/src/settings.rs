@@ -16,6 +16,8 @@ pub struct Settings {
     pub shop: ShopSettings,
     pub scheduler: SchedulerSettings,
     pub worker: WorkerSettings,
+    pub server: ServerSettings,
+    pub services: ServiceSettings,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -65,6 +67,7 @@ pub struct TitleSettings {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ShopSettings {
+    pub name: String,
     pub host: String,
     pub public: bool,
     pub motd: String,
@@ -193,6 +196,8 @@ impl Default for Settings {
             shop: ShopSettings::default(),
             scheduler: SchedulerSettings::default(),
             worker: WorkerSettings::default(),
+            server: ServerSettings::default(),
+            services: ServiceSettings::default(),
         }
     }
 }
@@ -252,6 +257,7 @@ impl Default for TitleSettings {
 impl Default for ShopSettings {
     fn default() -> Self {
         Self {
+            name: "Ownfoil Rust".to_string(),
             host: String::new(),
             public: false,
             motd: "Welcome to your own shop!".to_string(),
@@ -521,5 +527,32 @@ mod tests {
         assert!(redacted.shop.clients.tinfoil.hauth.is_empty());
         assert!(redacted.shop.clients.tinfoil.clientCertKey.is_empty());
         Ok(())
+    }
+}
+
+/// Durable identity shared by discovery and the native client handshake.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ServerSettings {
+    pub uid: String,
+}
+impl Default for ServerSettings {
+    fn default() -> Self {
+        Self { uid: uuid::Uuid::new_v4().to_string() }
+    }
+}
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ServiceSettings {
+    pub discovery: DiscoverySettings,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct DiscoverySettings {
+    pub enabled: bool,
+}
+impl Default for DiscoverySettings {
+    fn default() -> Self {
+        Self { enabled: true }
     }
 }

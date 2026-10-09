@@ -830,10 +830,22 @@ fn ensure_schema_columns(conn: &Connection) -> rusqlite::Result<()> {
         ("added_at", "TEXT"),
         ("organized", "INTEGER NOT NULL DEFAULT 0"),
         ("nb_content", "INTEGER NOT NULL DEFAULT 0"),
+        ("download_token", "TEXT"),
     ] {
         if !table_has_column(conn, "files", name)? {
             conn.execute_batch(&format!("ALTER TABLE files ADD COLUMN {name} {definition};"))?;
         }
+    }
+    conn.execute_batch(
+        "UPDATE files SET download_token=lower(hex(randomblob(16))) WHERE download_token IS NULL;
+        CREATE UNIQUE INDEX IF NOT EXISTS files_download_token ON files(download_token);
+        CREATE TRIGGER IF NOT EXISTS files_mint_download_token AFTER INSERT ON files
+        WHEN NEW.download_token IS NULL BEGIN
+            UPDATE files SET download_token=lower(hex(randomblob(16))) WHERE id=NEW.id;
+        END;",
+    )?;
+    if !table_has_column(conn, "apps", "display_version")? {
+        conn.execute("ALTER TABLE apps ADD COLUMN display_version TEXT", [])?;
     }
     if !table_has_column(conn, "tasks", "cancel_requested")? {
         conn.execute(
@@ -968,6 +980,12 @@ fn migrate_upstream_schema(conn: &mut Connection) -> Result<()> {
 
         ",
     )?;
+    if table_has_column(&transaction, "upstream_apps", "display_version")? {
+        transaction.execute_batch("UPDATE apps SET display_version=(SELECT display_version FROM upstream_apps WHERE upstream_apps.id=apps.id)")?;
+    }
+    if table_has_column(&transaction, "upstream_files", "download_token")? {
+        transaction.execute_batch("UPDATE files SET download_token=(SELECT download_token FROM upstream_files WHERE upstream_files.id=files.id) WHERE EXISTS(SELECT 1 FROM upstream_files WHERE upstream_files.id=files.id AND download_token IS NOT NULL)")?;
+    }
     for column in [
         "organized",
         "signature_valid",
