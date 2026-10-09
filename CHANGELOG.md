@@ -14,7 +14,12 @@
   relationship hydration.
 - Add responses captured from the pinned Ownfoil 2.5.0 schema and controlled
   benchmark tooling. New end-to-end Switch installation validation remains open.
-- Validate 159 automated tests, including 68 exact upstream response comparisons;
+- Start extraction after valid key upload and at startup. Fix IVFC layer counts,
+  root RomFS metadata selection/padding, and newer NCA key generations found in
+  real-library testing. All 98 files processed without failure, yielding 76
+  extracted metadata records; Switch discovery, private login, and browsing
+  confirmed. Installation and resume remain pending.
+- Validate 162 automated tests, including 68 exact upstream response comparisons;
   four optional tests are ignored in the normal suite, and the scaling benchmark
   passes separately. Strict CI Clippy, formatting, and whitespace checks pass.
 

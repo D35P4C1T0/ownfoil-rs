@@ -184,6 +184,13 @@ end-to-end parity claim.
 
 ## Implementation evidence and remaining gates
 
+The 2026-10-09 Mac/Switch session confirmed LAN discovery, private login, and
+basic browsing. Real-library processing completed all 98 files with zero failures
+and 76 extracted metadata records. Key upload/startup scheduling, IVFC layers,
+RomFS root metadata/padding, and modern NCA key generations were corrected from
+these observations. Full device scenarios, installation, and resume remain open;
+see `VALIDATION.md` for the current matrix.
+
 `tests/fixtures/sphaira_250_parity.json` captures 68 responses from the real pinned
 Python schema: the 17 released-client query shapes, two pages, and both bundle
 preferences. Its synthetic library includes two owned updates, a newer unowned

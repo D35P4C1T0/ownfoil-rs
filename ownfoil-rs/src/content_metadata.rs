@@ -211,10 +211,11 @@ fn read_control(
                 let count = u32::from_le_bytes(
                     fs[0x14..0x18].try_into().map_err(|_| "Invalid integrity count")?,
                 ) as usize;
-                if !(1..=6).contains(&count) {
+                // MaxLayers includes the master hash; six descriptors follow it.
+                if !(2..=7).contains(&count) {
                     return Err("Invalid integrity count".into());
                 }
-                let at = 0x18 + (count - 1) * 0x18;
+                let at = 0x18 + (count - 2) * 0x18;
                 (u64_at(fs, at)?, u64_at(fs, at + 8)?)
             }
             2 => (u64_at(fs, 0x40)?, u64_at(fs, 0x48)?),
@@ -283,6 +284,16 @@ fn parse_romfs(
         let entry = table.get(offset..offset + 32).ok_or("Truncated RomFS entry")?;
         let name_size =
             u32::from_le_bytes(entry[28..32].try_into().map_err(|_| "Invalid name size")?) as usize;
+        if name_size == 0 && table[offset..].iter().all(|byte| *byte == 0) {
+            break;
+        }
+        let parent = u32::from_le_bytes(entry[..4].try_into().map_err(|_| "Invalid parent")?);
+        let next = offset.checked_add(32 + ((name_size + 3) & !3)).ok_or("RomFS overflow")?;
+        // Control metadata lives at the root; nested resources may reuse filenames.
+        if parent != 0 || name_size == 0 {
+            offset = next;
+            continue;
+        }
         let name = String::from_utf8_lossy(
             table.get(offset + 32..offset + 32 + name_size).ok_or("Invalid RomFS filename")?,
         )
@@ -297,7 +308,7 @@ fn parse_romfs(
         if files.insert(name, value).is_some() {
             return Err("Duplicate RomFS name".into());
         }
-        offset = offset.checked_add(32 + ((name_size + 3) & !3)).ok_or("RomFS overflow")?;
+        offset = next;
     }
     let nacp = *files.get("control.nacp").ok_or("Missing control.nacp")?;
     parse_nacp(nacp, &files, identity, wanted)
@@ -448,7 +459,7 @@ mod container_tests {
         bytes[fs + 3] = 3;
         bytes[fs + 4] = if ctr { 3 } else { 1 };
         bytes[fs + 8..fs + 12].copy_from_slice(b"IVFC");
-        bytes[fs + 0x14..fs + 0x18].copy_from_slice(&6u32.to_le_bytes());
+        bytes[fs + 0x14..fs + 0x18].copy_from_slice(&7u32.to_le_bytes());
         bytes[fs + 0x98..fs + 0xa0].copy_from_slice(&0x8000u64.to_le_bytes());
         bytes[fs + 0x140..fs + 0x148].copy_from_slice(&7u64.to_le_bytes());
         let aes = aes::Aes128::new((&[0x11; 16]).into());
@@ -484,6 +495,39 @@ mod container_tests {
         bytes[..0xc00].copy_from_slice(&encrypted);
         (bytes, keys)
     }
+    #[test]
+    fn modern_key_generations_parse_without_changing_header_bytes() {
+        for generation in [0x14u8, 0x15, 0x16] {
+            let (bytes, keys) = fixture(false, 0);
+            let mut header = decrypt_with_header_key(&bytes[..0xc00], &keys, 0x200, 0).unwrap();
+            header[0x220] = generation;
+            let encrypted =
+                nx_archive::formats::nca::encrypt_with_header_key(&header, &keys, 0x200, 0);
+            let mut bytes = bytes;
+            bytes[..0xc00].copy_from_slice(&encrypted);
+            let nca = Nca::from_reader(Cursor::new(&bytes), &keys, None).unwrap();
+            assert_eq!(nca.header.key_generation as u8, generation);
+        }
+    }
+
+    #[test]
+    fn root_metadata_ignores_nested_duplicates_and_table_padding() {
+        let (mut bytes, _) = fixture(false, 0);
+        let rom = &mut bytes[0x4000..];
+        rom[0x40..0x48].copy_from_slice(&120u64.to_le_bytes());
+        let nested = 0x7c;
+        rom[nested..nested + 4].copy_from_slice(&4u32.to_le_bytes());
+        rom[nested + 28..nested + 32].copy_from_slice(&12u32.to_le_bytes());
+        rom[nested + 32..nested + 44].copy_from_slice(b"control.nacp");
+        let identity = IdentifiedContent {
+            title_id: "0100000000000000".into(),
+            app_id: "0100000000000000".into(),
+            version: 0,
+            kind: crate::catalog::ContentKind::Base,
+        };
+        assert_eq!(parse_romfs(rom, &identity, 0).unwrap().record["name"], "Game");
+    }
+
     #[test]
     fn encrypted_control_nca_and_sparse_section_extract_metadata() {
         for ctr in [false, true] {

@@ -8,3 +8,7 @@
 - `src/content/public_moduli.rs` contains public verification constants from
   NSTools (`seiya-dev/NSTools`). See `NSTools-LICENSE.md`.
 - Cargo dependencies retain their respective licenses in their source packages.
+- `nx-archive/` vendors nx-archive 0.1.2 (MIT), upstream commit
+  `9f037ba66c9ad565030d05323ede9a5fc384e318`, with a compatibility patch accepting
+  NCA key generations 0x14 through 0x16 found in real-library testing. Its license is
+  retained in `nx-archive/LICENSE`. Remove the patch when upstream supports them.

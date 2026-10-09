@@ -1313,6 +1313,7 @@ pub async fn queue_pipeline(state: &AppState) -> anyhow::Result<()> {
     if crate::keys::inspect(&state.keys_path).valid_keys != Some(true) {
         return Ok(());
     }
+    enqueue(storage, "process_library", json!({})).await?;
     let management = state.settings.read().await.library.management.clone();
     let depth = management.verification.depth.clone();
     let pending=storage.with_connection(move |conn| {

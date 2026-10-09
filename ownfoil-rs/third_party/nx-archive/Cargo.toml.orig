@@ -1,0 +1,36 @@
+[package]
+name = "nx-archive"
+version = "0.1.2"
+edition = "2024"
+description = "Rust library for working with Nintendo Switch filesystems and archives"
+license = "MIT"
+repository = "https://github.com/RyouVC/nx-archive"
+readme = "README.md"
+keywords = ["nintendo", "switch", "nx", "archive", "filesystem"]
+categories = ["filesystem", "hardware-support", "game-development"]
+authors = [
+    "Cappy Ishihara <cappy@cappuchino.xyz>",
+    "Eri Ishihara <eri@nijika.dev>",
+]
+
+[dependencies]
+aes = "0.8.4"
+binrw = ">=0.14"
+cipher = "0.4.4"
+ctr = "0.9.2"
+ecb = "0.1.2"
+block-modes = "0.9.1"
+hex = "0.4.3"
+hex-literal = "1.0.0"
+regex = "1.11.1"
+thiserror = "2.0.12"
+tracing = "0"
+xts = "0.0.0"
+xts-mode = "0.5.1"
+ctr6 = { package = "ctr", version = "0.6" }
+dirs = "6.0.0"
+
+[dev-dependencies]
+color-eyre = "0.6.3"
+tracing-subscriber = "0.3.19"
+tracing-test = "0.2.5"

@@ -1673,6 +1673,68 @@ mod tests {
             assert!(handler.contains("finally{e.target.disabled=false}"));
         }
     }
+    #[tokio::test]
+    async fn valid_key_upload_queues_extraction_and_startup_backfills_without_management()
+    -> Result<()> {
+        use axum_test::multipart::{MultipartForm, Part};
+        let directory = tempdir()?;
+        let storage = crate::storage::Storage::open(directory.path().join("keys-test.db")).await?;
+        let mut state = test_app_state(
+            Catalog::from_files(vec![]),
+            directory.path().into(),
+            AuthSettings::from_users(vec![AuthUser {
+                username: "admin".into(),
+                password: "secret".into(),
+            }]),
+            SessionStore::new(24),
+        );
+        state.storage = Some(storage.clone());
+        state.keys_path = directory.path().join("keys.txt");
+        let server = TestServer::new(router(state.clone()))?;
+        for (text, valid) in [
+            ("master_key_00 = invalid".to_string(), false),
+            (format!("master_key_00 = {}", "00".repeat(16)), true),
+        ] {
+            let form =
+                MultipartForm::new().add_part("file", Part::text(text).file_name("prod.keys"));
+            let response = server
+                .post("/api/upload")
+                .add_header("authorization", "Basic YWRtaW46c2VjcmV0")
+                .multipart(form)
+                .await;
+            response.assert_status_ok();
+            assert_eq!(response.json::<Value>()["data"]["valid_keys"], valid);
+            let count = storage
+                .with_connection(|conn| {
+                    Ok(conn.query_row(
+                        "SELECT COUNT(*) FROM tasks WHERE task_name='process_library'",
+                        [],
+                        |r| r.get::<_, i64>(0),
+                    )?)
+                })
+                .await?;
+            assert_eq!(count, i64::from(valid));
+        }
+        storage
+            .with_connection(|conn| {
+                conn.execute("DELETE FROM tasks", [])?;
+                Ok(())
+            })
+            .await?;
+        crate::tasks::queue_pipeline(&state).await?;
+        let count = storage
+            .with_connection(|conn| {
+                Ok(conn.query_row(
+                    "SELECT COUNT(*) FROM tasks WHERE task_name='process_library'",
+                    [],
+                    |r| r.get::<_, i64>(0),
+                )?)
+            })
+            .await?;
+        assert_eq!(count, 1);
+        Ok(())
+    }
+
     include!("native_tests.rs");
     include!("sphaira_parity_tests.rs");
 }

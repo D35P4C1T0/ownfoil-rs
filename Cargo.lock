@@ -2000,8 +2000,6 @@ dependencies = [
 [[package]]
 name = "nx-archive"
 version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c3206ee2ca6b70db916253e74ca384baa51cf0889cc4ffb4f9bd67ee25d5dcff"
 dependencies = [
  "aes",
  "binrw",

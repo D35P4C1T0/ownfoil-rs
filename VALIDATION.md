@@ -70,26 +70,32 @@ latency figures remain Rust-only observations and do not prove superiority.
 
 Prior native integration discovery and browsing were verified on a physical
 Switch, as recorded in CHANGELOG.md; console installation remained unverified.
-The new parity features and complete matrix below are **pending for every row**: no
-Switch was available to these implementation agents.
+On 2026-10-09, the user confirmed LAN discovery, private-shop login, and game
+browsing on a physical Switch against this Mac's release build on
+`spharia-support`. The installed Sphaira version and remaining scenarios have
+not yet been recorded.
 
 | Device check (Sphaira 1.0.8) | Required scenarios | Result |
 | --- | --- | --- |
-| Discovery and identity | LAN, manual HTTPS, restart, saved shop UID | Pending |
-| Authentication | Private valid/invalid login, public shop, cached artwork | Pending |
-| Browsing | New/Updates/DLC/All/Search, each sort, multiple pages, details | Pending |
+| Discovery and identity | LAN, manual HTTPS, restart, saved shop UID | LAN discovery passed; remaining scenarios pending |
+| Authentication | Private valid/invalid login, public shop, cached artwork | Private valid login passed; remaining scenarios pending |
+| Browsing | New/Updates/DLC/All/Search, each sort, multiple pages, details | Basic game browsing passed; complete matrix pending |
 | Metadata | NACP name/publisher/icon/version, absent TitleDB, locale switch | Pending |
 | Installation | Base/update/DLC, NSP/NSZ/XCI/XCZ, bundles, both preferences, roots | Pending |
 | Resume | Interrupt and resume an installation, confirm selected bytes/content | Pending |
 | Prepared offline browsing | Download artwork, disconnect external network, browse/refresh | Pending |
 
 Record device/server builds, authentication mode, scenario, result and relevant
-logs before claiming end-to-end parity. Encrypted Control NCA extraction and real
-archive behavior also need local owned-content checks; synthetic NACP/RomFS tests
-do not substitute for them. Never commit keys, passwords, or commercial archives.
+logs before claiming end-to-end parity. The isolated Mac test instance processed
+98 real library files with uploaded keys: 98 completed, zero failed, and 76
+extracted metadata records. This exposed and verified fixes for IVFC layer counts,
+RomFS nested names/padding, newer NCA key generations, and automatic extraction
+after key upload/startup. Complete processing can also mean a file has no Control
+metadata. Archive installation and resume remain pending. Never commit keys,
+passwords, or commercial archives.
 
-Automated parity run: **151 unit/integration tests plus eight route-contract
-tests passed (159 total), four optional tests ignored**. The separately invoked
+Automated parity run: **154 unit/integration tests plus eight route-contract
+tests passed (162 total), four optional tests ignored**. The separately invoked
 ignored scaling benchmark also passed, using Rust 1.98.0 on macOS aarch64, debug
 build, sequential requests through the in-process Axum test transport. The
 current implementation recorded these warm response times (20 samples per

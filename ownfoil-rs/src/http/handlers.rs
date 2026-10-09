@@ -1546,6 +1546,13 @@ async fn upload_post(
         let temp_path = state.keys_path.with_extension("txt.tmp");
         tokio::fs::write(&temp_path, &bytes).await.map_err(|_| ApiError::Internal)?;
         tokio::fs::rename(&temp_path, &state.keys_path).await.map_err(|_| ApiError::Internal)?;
+        if status.valid_keys == Some(true) {
+            if let Some(storage) = &state.storage {
+                crate::tasks::enqueue(storage, "process_library", serde_json::json!({}))
+                    .await
+                    .map_err(|_| ApiError::Internal)?;
+            }
+        }
         return Ok(Json(serde_json::json!({
             "success": true,
             "errors": [],

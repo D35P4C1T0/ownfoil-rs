@@ -1,3 +1,6 @@
 [workspace]
 members = ["ownfoil-rs"]
 resolver = "2"
+
+[patch.crates-io]
+nx-archive = { path = "ownfoil-rs/third_party/nx-archive" }
