@@ -473,6 +473,20 @@ impl TitleDb {
         title_count(&self.inner.lock().await.db)
     }
 
+    /// Legacy caches contain names and artwork but no full metadata records.
+    pub async fn needs_initial_refresh(&self) -> bool {
+        self.inner
+            .lock()
+            .await
+            .db
+            .query_row(
+                "SELECT NOT EXISTS(SELECT 1 FROM titles WHERE record NOT IN ('{}',''))",
+                [],
+                |row| row.get::<_, bool>(0),
+            )
+            .unwrap_or(true)
+    }
+
     pub fn cache_identity(&self) -> usize {
         Arc::as_ptr(&self.inner) as usize
     }
@@ -1911,6 +1925,38 @@ mod tests {
             titledb.languages("0100000000010000").await.expect("languages").languages,
             vec!["en".to_string(), "it".to_string()]
         );
+    }
+
+    #[tokio::test]
+    async fn initial_refresh_backfills_legacy_records_without_discarding_cached_titles() {
+        let cache = TitleDb::from_entries([]);
+        assert!(cache.needs_initial_refresh().await);
+        cache
+            .inner
+            .lock()
+            .await
+            .db
+            .execute(
+                "INSERT INTO titles(id,name,record) VALUES('0100000000010000','Cached game','{}')",
+                [],
+            )
+            .expect("legacy cache fixture");
+        assert!(cache.needs_initial_refresh().await);
+        assert_eq!(
+            cache.lookup("0100000000010000").await.expect("cached title").name.as_deref(),
+            Some("Cached game")
+        );
+        cache
+            .inner
+            .lock()
+            .await
+            .db
+            .execute(
+                "UPDATE titles SET record=?1",
+                [r#"{"id":"0100000000010000","name":"Cached game","description":"Rich details"}"#],
+            )
+            .expect("refreshed fixture");
+        assert!(!cache.needs_initial_refresh().await);
     }
 
     #[tokio::test]

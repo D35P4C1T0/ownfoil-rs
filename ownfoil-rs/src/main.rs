@@ -281,7 +281,7 @@ fn spawn_titledb_refresh(
         loop {
             let interval = settings.read().await.scheduler.scan_interval.clone();
             if titledb.config().await.enabled {
-                if startup && titledb.entry_count().await == 0 {
+                if startup && titledb.needs_initial_refresh().await {
                     if let Err(error) =
                         crate::tasks::enqueue(&storage, "update_titledb", serde_json::json!({}))
                             .await

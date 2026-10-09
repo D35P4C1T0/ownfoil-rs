@@ -96,8 +96,15 @@ after key upload/startup. Complete processing can also mean a file has no Contro
 metadata. Archive installation and resume remain pending. Never commit keys,
 passwords, or commercial archives.
 
-Automated parity run: **155 unit/integration tests plus eight route-contract
-tests passed (163 total), four optional tests ignored**. The separately invoked
+The test instance initially copied a legacy TitleDB cache with 61,798 names and
+artwork records but no description/publisher/category/release-date fields. A
+regional metadata refresh supplied descriptions for 37 of the 44 owned base
+games, including the title used for the failed installation attempt. Description
+availability depends on the provider; the details request preserves scoped
+hydration. Enabled legacy caches now queue a startup refresh for full records.
+
+Automated parity run: **156 unit/integration tests plus eight route-contract
+tests passed (164 total), four optional tests ignored**. The separately invoked
 ignored scaling benchmark also passed, using Rust 1.98.0 on macOS aarch64, debug
 build, sequential requests through the in-process Axum test transport. The
 current implementation recorded these warm response times (20 samples per
