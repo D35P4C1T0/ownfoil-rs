@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Scope direct GraphQL title details to the selected games and related content,
+  avoiding full TitleDB projection and artwork lookups when opening a game.
+
 - Extract localized name, publisher, icon, and display version from Control
   NCA/NACP metadata, including bounded compressed-member decoding. Persist
   extraction provenance and select the newest available owned source while
@@ -19,7 +22,7 @@
   real-library testing. All 98 files processed without failure, yielding 76
   extracted metadata records; Switch discovery, private login, and browsing
   confirmed. Installation and resume remain pending.
-- Validate 162 automated tests, including 68 exact upstream response comparisons;
+- Validate 163 automated tests, including 68 exact upstream response comparisons;
   four optional tests are ignored in the normal suite, and the scaling benchmark
   passes separately. Strict CI Clippy, formatting, and whitespace checks pass.
 

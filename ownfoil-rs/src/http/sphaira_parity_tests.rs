@@ -2,6 +2,7 @@
 mod sphaira_parity_tests {
     use super::*;
     use crate::catalog::IdentifiedContent;
+    use crate::http::graph_data::GraphData;
     use serde_json::json;
 
     const UPSTREAM: &str = "a9ac7479f7b54cd52731b24947ac0631cb77ba5f";
@@ -86,6 +87,30 @@ mod sphaira_parity_tests {
         assert_eq!(page["total"], 100);
         assert_eq!(page["items"].as_array().unwrap().len(), 7);
         assert_eq!(page["_hydratedCounts"], json!({"titles":7,"apps":7,"files":7}));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn title_details_scope_matches_full_projection_and_keeps_unowned_metadata() -> Result<()> {
+        let (_directory, mut state) = scaling_state(500).await?;
+        let id = "0100000000001000".to_string();
+        let full = GraphData::load(&state, false).await?;
+        let scoped = GraphData::load_titles(&state, false, vec![id.clone()]).await?;
+        assert_eq!(scoped.title(&json!(id)), full.title(&json!(id)));
+        assert_eq!((scoped.titles.len(), scoped.apps.len(), scoped.files.len()), (1, 1, 1));
+
+        state.titledb = TitleDb::from_entries([(
+            "010000000FFFF000".into(),
+            TitleInfo {
+                name: Some("Unowned game".into()),
+                record: json!({"id":"010000000FFFF000","name":"Unowned game"})
+                    .as_object().unwrap().clone(),
+                ..Default::default()
+            },
+        )]);
+        let scoped = GraphData::load_titles(&state, false, vec!["010000000FFFF000".into()]).await?;
+        assert_eq!(scoped.title(&json!("010000000FFFF000"))["name"], "Unowned game");
+        assert!(scoped.apps.is_empty());
         Ok(())
     }
 

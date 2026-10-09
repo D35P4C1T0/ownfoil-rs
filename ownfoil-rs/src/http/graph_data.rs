@@ -24,6 +24,13 @@ impl GraphData {
         // TitleDB, so it still needs the complete metadata snapshot.
         Self::load_scoped(state, can_admin, state.storage.is_some(), None, true, true).await
     }
+    pub async fn load_titles(
+        state: &AppState,
+        can_admin: bool,
+        ids: Vec<String>,
+    ) -> anyhow::Result<Self> {
+        Self::load_scoped(state, can_admin, true, Some(ids), true, true).await
+    }
     #[allow(clippy::too_many_lines)]
     #[allow(clippy::fn_params_excessive_bools)] // Independent authorization and selected-field hydration gates.
     async fn load_scoped(
@@ -181,13 +188,14 @@ impl GraphData {
             }
         }
         if apps_only {
-            let ids = data
+            let mut ids = data
                 .apps
                 .iter()
                 .flat_map(|app| ["titleId", "appId"].map(|key| app[key].as_str()))
                 .flatten()
                 .map(str::to_string)
                 .collect::<BTreeSet<_>>();
+            ids.extend(scope.iter().flatten().cloned());
             data.titles = state.titledb.records_for_ids(&ids).await;
         }
         for row in title_overrides {

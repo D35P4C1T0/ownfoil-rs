@@ -160,7 +160,7 @@ separately from warm catalog responses and asserts 40 hydrated apps at either
 size. It does not count all SQLite statements or measure true peak memory.
 Results, mode, architecture and budget are retained in
 [the dated scaling record](../docs/SPHAIRA_SCALING_2026-10-09.json). Full current
-suite after real-library fixes: 162 passed across unit/integration/route tests,
+suite after real-library fixes: 163 passed across unit/integration/route tests,
 four ignored. The isolated Mac release instance processed all 98 real library
 files without failure and persisted 76 extracted metadata records. The user
 confirmed Switch discovery, private login, and basic browsing; installation and

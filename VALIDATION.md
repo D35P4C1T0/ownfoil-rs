@@ -72,8 +72,10 @@ Prior native integration discovery and browsing were verified on a physical
 Switch, as recorded in CHANGELOG.md; console installation remained unverified.
 On 2026-10-09, the user confirmed LAN discovery, private-shop login, and game
 browsing on a physical Switch against this Mac's release build on
-`spharia-support`. The installed Sphaira version and remaining scenarios have
-not yet been recorded.
+`spharia-support`, using Sphaira 1.0.8. Installation reached the server download
+route but failed in the client with `KeyFailedDecyptETicketDeviceKey`; the user
+reported sysMMC with Incognito. Console device-key decryption is a remaining
+blocker, and complete installation/resume have not been verified.
 
 | Device check (Sphaira 1.0.8) | Required scenarios | Result |
 | --- | --- | --- |
@@ -81,7 +83,7 @@ not yet been recorded.
 | Authentication | Private valid/invalid login, public shop, cached artwork | Private valid login passed; remaining scenarios pending |
 | Browsing | New/Updates/DLC/All/Search, each sort, multiple pages, details | Basic game browsing passed; complete matrix pending |
 | Metadata | NACP name/publisher/icon/version, absent TitleDB, locale switch | Pending |
-| Installation | Base/update/DLC, NSP/NSZ/XCI/XCZ, bundles, both preferences, roots | Pending |
+| Installation | Base/update/DLC, NSP/NSZ/XCI/XCZ, bundles, both preferences, roots | Blocked by client eTicket device-key decryption error; sysMMC with Incognito |
 | Resume | Interrupt and resume an installation, confirm selected bytes/content | Pending |
 | Prepared offline browsing | Download artwork, disconnect external network, browse/refresh | Pending |
 
@@ -94,8 +96,8 @@ after key upload/startup. Complete processing can also mean a file has no Contro
 metadata. Archive installation and resume remain pending. Never commit keys,
 passwords, or commercial archives.
 
-Automated parity run: **154 unit/integration tests plus eight route-contract
-tests passed (162 total), four optional tests ignored**. The separately invoked
+Automated parity run: **155 unit/integration tests plus eight route-contract
+tests passed (163 total), four optional tests ignored**. The separately invoked
 ignored scaling benchmark also passed, using Rust 1.98.0 on macOS aarch64, debug
 build, sequential requests through the in-process Axum test transport. The
 current implementation recorded these warm response times (20 samples per

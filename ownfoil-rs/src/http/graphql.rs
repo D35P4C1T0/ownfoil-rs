@@ -503,8 +503,9 @@ async fn dispatch(
     if mutation {
         super::handlers::ensure_same_origin(&headers)?;
     }
-    // Only direct app roots can use a reduced metadata snapshot. Full title
-    // searches, statistics and fragment roots retain the complete catalogue.
+    // Direct detail roots can hydrate only the requested games. Other root
+    // shapes retain the complete catalogue for filtering and statistics.
+    let title_ids = direct_title_ids(&mut request);
     let apps_only = request.parsed_query().is_ok_and(|doc| {
         doc.operations.iter().all(|(_, op)| {
             op.node.ty == async_graphql_parser::types::OperationType::Query
@@ -518,6 +519,8 @@ async fn dispatch(
     let sql_apps = apps_only && state.storage.is_some();
     let data = if sql_apps {
         Ok(GraphData { can_admin, ..GraphData::default() })
+    } else if let Some(ids) = title_ids.filter(|_| state.storage.is_some()) {
+        GraphData::load_titles(&state, can_admin, ids).await
     } else if apps_only {
         GraphData::load_apps(&state, can_admin).await
     } else {
@@ -554,6 +557,43 @@ async fn dispatch(
         response.headers_mut().insert("etag", etag.parse().map_err(|_| ApiError::Internal)?);
     }
     Ok(response)
+}
+
+fn direct_title_ids(request: &mut Request) -> Option<Vec<String>> {
+    let variables = request.variables.clone();
+    let selected = request.operation_name.clone();
+    let document = request.parsed_query().ok()?;
+    let mut ids = Vec::new();
+    for (name, operation) in document.operations.iter() {
+        if selected
+            .as_deref()
+            .is_some_and(|selected| name.is_none_or(|name| name.as_str() != selected))
+        {
+            continue;
+        }
+        if operation.node.ty != async_graphql_parser::types::OperationType::Query {
+            return None;
+        }
+        for selection in &operation.node.selection_set.node.items {
+            let async_graphql_parser::types::Selection::Field(field) = &selection.node else {
+                return None;
+            };
+            if field.node.name.node.as_str() != "title" {
+                return None;
+            }
+            let (_, argument) =
+                field.node.arguments.iter().find(|(name, _)| name.node == "titleId")?;
+            let value = argument
+                .node
+                .clone()
+                .into_const_with(|name| variables.get(&name).cloned().ok_or(()))
+                .ok()?
+                .into_json()
+                .ok()?;
+            ids.push(value.as_str()?.to_ascii_uppercase());
+        }
+    }
+    (!ids.is_empty()).then_some(ids)
 }
 
 async fn graph_access(
