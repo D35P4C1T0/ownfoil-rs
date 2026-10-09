@@ -1444,7 +1444,7 @@ mod tests {
         drain(&state).await?;
         let parent =
             run_task(&state, "process_library", json!({"library_path":state.library_root})).await?;
-        assert!(child_rows(storage, parent).await?.is_empty());
+        assert_eq!(child_rows(storage, parent).await?, Vec::<(String, String)>::new());
         assert_eq!(drain(&state).await?, 2);
         let file = selected_files(storage, &json!({})).await?.remove(0);
         let file_id = file.id;
@@ -1607,7 +1607,7 @@ mod tests {
         assert!(running.await.is_err());
         assert!(cancelled(storage, id).await);
         assert_eq!(list(storage).await?.len(), 1);
-        assert!(storage.list_libraries().await?.is_empty());
+        assert_eq!(storage.list_libraries().await?, Vec::<crate::storage::Library>::new());
         Ok(())
     }
 

@@ -193,6 +193,6 @@ mod tests {
             ["update", "add", "remove"]
         );
         assert_eq!(events[2]["data"], old[1]);
-        assert!(topic_events("tasks", Some(&new), &new).is_empty());
+        assert_eq!(topic_events("tasks", Some(&new), &new), Vec::<Value>::new());
     }
 }

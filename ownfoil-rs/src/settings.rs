@@ -525,7 +525,7 @@ mod tests {
         assert_eq!(Settings::load(&path)?, settings);
         let redacted = settings.redacted();
         assert!(redacted.shop.clients.tinfoil.hauth.is_empty());
-        assert!(redacted.shop.clients.tinfoil.clientCertKey.is_empty());
+        assert_eq!(redacted.shop.clients.tinfoil.clientCertKey, "");
         Ok(())
     }
 }
