@@ -1,0 +1,43 @@
+name: Weekly release
+
+on:
+  schedule:
+    - cron: '17 3 * * 0'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: weekly-release
+  cancel-in-progress: false
+
+jobs:
+  changes:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    outputs:
+      build: ${{ steps.plan.outputs.build }}
+      ref: ${{ steps.plan.outputs.ref }}
+      tag: ${{ steps.plan.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for new commits on main
+        id: plan
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await require('./scripts/release-plan.cjs').weekly({github, context, core});
+
+  release:
+    needs: changes
+    if: needs.changes.outputs.build == 'true'
+    permissions:
+      contents: write
+      packages: write
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.changes.outputs.tag }}
+      ref: ${{ needs.changes.outputs.ref }}
+      prerelease: true

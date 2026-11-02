@@ -6,8 +6,27 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Tag to build (e.g. v0.3.0)'
+        description: 'Tag to build (e.g. v0.4.0)'
         required: true
+        type: string
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+      ref:
+        required: true
+        type: string
+      prerelease:
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.event.release.tag_name }}
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -32,7 +51,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+          ref: ${{ inputs.ref || github.event.release.tag_name || inputs.tag }}
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -51,7 +70,7 @@ jobs:
             ${{ runner.os }}-${{ matrix.target }}-
 
       - name: Build
-        run: cargo build -p ownfoil-rs --release --target ${{ matrix.target }}
+        run: cargo build -p ownfoil-rs --locked --release --target ${{ matrix.target }}
 
       - name: Prepare artifact (Unix)
         if: matrix.archive == 'tar.gz'
@@ -88,9 +107,25 @@ jobs:
       - name: Attach to release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ github.event.release.tag_name || github.event.inputs.tag }}
+          tag_name: ${{ github.event.release.tag_name || inputs.tag }}
+          target_commitish: ${{ inputs.ref || github.sha }}
+          name: ${{ github.event.release.name || inputs.tag }}
+          body: ${{ inputs.prerelease && format('Internal weekly build of {0}.', inputs.ref) || '' }}
+          prerelease: ${{ inputs.prerelease || github.event.release.prerelease || false }}
+          make_latest: ${{ (inputs.prerelease || github.event.release.prerelease) && 'false' || 'legacy' }}
+          fail_on_unmatched_files: true
           files: |
             artifacts/**/*.tar.gz
             artifacts/**/*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  container:
+    needs: release
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/container.yml
+    with:
+      ref: ${{ inputs.ref || github.event.release.tag_name || inputs.tag }}
+      tag: ${{ inputs.prerelease && 'weekly' || github.event.release.tag_name || inputs.tag }}

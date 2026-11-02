@@ -12,6 +12,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+
+      - name: Release planning tests
+        run: node --test scripts/release-plan.test.cjs
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:

@@ -60,6 +60,28 @@ its request allowance; forwarded IP headers do not change that allowance.
 
 View logs with `docker compose logs -f ownfoil`; stop with `docker compose down`.
 
+## Weekly builds and Docker images
+
+Every Sunday at 03:17 UTC, GitHub Actions checks `main` and publishes a prerelease
+such as `weekly-20261101` only when it has changed since the last successful weekly
+run. The first run compares against the latest stable release. Weekly releases
+include the same Linux x86-64, Windows x86-64, and macOS ARM64 archives as stable
+releases, with a short internal build note. Failed runs can be retried from Actions.
+
+Images are published to `ghcr.io/d35p4c1t0/ownfoil-rs` for Linux amd64, arm64,
+ARMv7, and ARMv6:
+
+- `weekly`: the latest successful weekly build.
+- `v0.4.0` (for example): the corresponding published release.
+- `latest`: GitHub's latest stable release; weekly and prerelease builds never move it.
+
+Publishing a GitHub release builds its archives and images. The **Release** action
+can also rebuild an existing version tag. Set `OWNFOIL_IMAGE` in `.env` to select
+an image, for example `ghcr.io/d35p4c1t0/ownfoil-rs:weekly`. Run `docker compose pull`
+followed by `docker compose up -d --no-build` to use that published image.
+The **Container** action can republish an existing image tag without rebuilding,
+including restoring `latest` to the current stable version.
+
 ## Sphaira native client
 
 Use Sphaira **1.0.8 or newer**: open **Menu → Menus → Ownfoil** and choose
