@@ -1939,6 +1939,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn full_scans_queue_the_safe_update_cleanup_without_keys() -> anyhow::Result<()> {
+        let (_dir, state) = test_state().await?;
+        let storage = state.storage.as_ref().context("missing storage")?;
+        let names = [
+            "Old [0100000000000800][v1].nsp",
+            "New [0100000000000800][v2].nsp",
+            "Copy [0100000000000800][v2].nsz",
+            "Bundle [0100000000000800][v1].nsp",
+        ];
+        for name in names {
+            std::fs::write(state.library_root.join(name), b"dummy")?;
+        }
+        let mut management = state.settings.read().await.library.management.clone();
+        management.delete_older_updates = true;
+        let files = crate::scan_all_libraries(
+            std::slice::from_ref(&state.library_root),
+            storage,
+            &management,
+            &state.keys_path,
+        )
+        .await?;
+        assert_eq!(files.len(), 4);
+        *state.catalog.write().await = crate::catalog::Catalog::from_files(files);
+        storage
+            .with_connection(|conn| {
+                conn.execute("UPDATE files SET multicontent=1 WHERE name LIKE 'Bundle%'", [])?;
+                Ok(())
+            })
+            .await?;
+        assert!(
+            list(storage).await?.iter().any(|task| task["taskName"] == "remove_outdated_updates")
+        );
+        assert_eq!(drain(&state).await?, 1);
+        assert!(!state.library_root.join(names[0]).exists());
+        for name in &names[1..] {
+            assert!(state.library_root.join(name).is_file());
+        }
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn title_flags_use_latest_dlc_and_scoped_missing_file_cleanup() -> anyhow::Result<()> {
         let (_dir, state) = test_state().await?;
         let storage = state.storage.as_ref().context("missing storage")?;

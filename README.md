@@ -44,7 +44,8 @@ From a checkout of this repository:
 
 4. Open **[http://localhost:8465](http://localhost:8465)**, or
    `http://<server-ip>:8465` from another device. Create your first administrator
-   and manage your library in the Web UI.
+   on the setup form, sign in, and manage your library in the Web UI. Administrative
+   APIs stay locked until you sign in; the last enabled administrator cannot be deleted.
 5. Open **Setup** (`/setup`) for client connection instructions. Upload your
    console keys in **Settings** when using content identification, verification,
    or conversion.
@@ -53,6 +54,9 @@ Configuration and database/cache persist in `./config` and `./data`. Keep both
 when upgrading. The library is writable for uploads and organization; set
 `GAMES_MOUNT_MODE=ro` in `.env` for serving only. See [.env.example](.env.example)
 for port, directory, and first-start administrator options.
+
+Rate limits use the connection IP. Clients behind the same reverse proxy share
+its request allowance; forwarded IP headers do not change that allowance.
 
 View logs with `docker compose logs -f ownfoil`; stop with `docker compose down`.
 

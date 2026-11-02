@@ -31,7 +31,6 @@ use crate::shop::{
 
 use crate::auth::{AuthRoles, hash_password};
 use crate::config::TitleDbConfig;
-use crate::scanner::scan_library;
 use crate::settings::{SchedulerSettings, ShopSettings, TitleSettings};
 use crate::storage::{NewLibrary, NewUser};
 
@@ -72,32 +71,32 @@ impl KeyExtractor for ClientKeyExtractor {
     type Key = String;
 
     fn extract<T>(&self, req: &Request<T>) -> Result<Self::Key, GovernorError> {
-        let ip = forwarded_for_ip(req.headers())
-            .or_else(|| x_real_ip(req.headers()))
-            .or_else(|| {
-                req.extensions()
-                    .get::<axum::extract::ConnectInfo<SocketAddr>>()
-                    .map(|addr| addr.ip())
-            })
+        let ip = req
+            .extensions()
+            .get::<axum::extract::ConnectInfo<SocketAddr>>()
+            .map(|addr| addr.ip())
             .or_else(|| req.extensions().get::<SocketAddr>().map(SocketAddr::ip))
             .unwrap_or(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
         Ok(ip.to_string())
     }
 }
 
-fn forwarded_for_ip(headers: &HeaderMap) -> Option<IpAddr> {
-    headers
-        .get("x-forwarded-for")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.split(',').next())
-        .and_then(|value| value.trim().parse::<IpAddr>().ok())
-}
+#[cfg(test)]
+mod rate_limit_tests {
+    use super::*;
 
-fn x_real_ip(headers: &HeaderMap) -> Option<IpAddr> {
-    headers
-        .get("x-real-ip")
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.trim().parse::<IpAddr>().ok())
+    #[test]
+    fn forwarded_headers_cannot_choose_the_client_key() -> anyhow::Result<()> {
+        let mut request = Request::builder()
+            .header("X-Forwarded-For", "203.0.113.1")
+            .header("X-Real-IP", "203.0.113.2")
+            .body(())?;
+        request
+            .extensions_mut()
+            .insert(axum::extract::ConnectInfo(SocketAddr::from(([192, 0, 2, 1], 1234))));
+        assert_eq!(ClientKeyExtractor.extract(&request)?, "192.0.2.1");
+        Ok(())
+    }
 }
 
 impl<S> FromRequestParts<S> for PeerAddr
@@ -129,7 +128,7 @@ use super::state::AppState;
 /// Build the Axum router with all routes, layers (rate limit, request ID, trace), and state.
 pub fn router(state: AppState) -> Router {
     let governor_conf = GovernorConfigBuilder::default()
-        .per_second(20)
+        .per_millisecond(50)
         .burst_size(50)
         .key_extractor(ClientKeyExtractor)
         .finish()
@@ -295,7 +294,7 @@ async fn shop_root(
             return Ok(Redirect::to("/").into_response());
         }
         let public = state.settings.read().await.shop.public;
-        if state.auth.is_enabled() && !public && !session_has_access(&state, &jar, Access::Shop) {
+        if !public && !session_has_access(&state, &jar, Access::Shop) {
             return Ok(Redirect::to("/login").into_response());
         }
         return Ok(admin_page(&state).await);
@@ -478,7 +477,7 @@ async fn sphaira_response(
     };
 
     if let Some(file) = files.iter().find(|file| {
-        file.name == virtual_path.rsplit('/').next().unwrap_or_default()
+        file.relative_path == std::path::Path::new(&virtual_path)
             && crate::scanner::is_supported_content(&file.relative_path)
     }) {
         let root = if file.library_root.as_os_str().is_empty() {
@@ -741,44 +740,20 @@ async fn download(
     }
     let decoded = percent_decode_str(&path).decode_utf8().map_err(|_| ApiError::InvalidPath)?;
     let sanitized = sanitize_relative_path(&decoded).map_err(|error| map_file_error(&error))?;
-    let title =
-        sanitized.file_name().and_then(|n: &std::ffi::OsStr| n.to_str()).unwrap_or("?").to_string();
-
-    let log_ctx = peer.map(|ip| DownloadLogContext { ip, title: title.clone() });
-
-    let response = match stream_with_range_support(
-        &state.library_root,
-        &sanitized,
-        &headers,
-        log_ctx.as_ref(),
-    )
-    .await
-    {
-        Ok(r) => r,
-        Err(error) => {
-            warn!(path = %sanitized.display(), error = %error, "download failed");
-            return Err(map_file_error(&error));
-        }
-    };
-    debug!(
-        path = %sanitized.display(),
-        status = %response.status(),
-        "download served"
-    );
-
-    let downloaded_id = state
+    let file = state
         .catalog
         .read()
         .await
         .files()
         .iter()
-        .find(|file| file.relative_path == sanitized)
-        .map(|file| file.id);
-    if let Some(id) = downloaded_id {
-        increment_download_throttled(&state, id, peer).await;
-    }
-
-    Ok(response)
+        .find(|file| {
+            file.relative_path == sanitized
+                && (file.library_root.as_os_str().is_empty()
+                    || file.library_root == state.library_root)
+        })
+        .cloned()
+        .ok_or(ApiError::NotFound)?;
+    serve_catalog_file(&state, file, &headers, peer).await
 }
 
 async fn download_by_id(
@@ -796,7 +771,6 @@ async fn download_by_id(
             .files()
             .iter()
             .find(|file| file.id == id && file.id != 0)
-            .or_else(|| id.checked_sub(1).and_then(|index| catalog.files().get(index)))
             .cloned()
             .ok_or(ApiError::NotFound)?
     };
@@ -951,6 +925,12 @@ async fn login_page(
     jar: CookieJar,
     Query(query): Query<LoginQuery>,
 ) -> Result<Response, ApiError> {
+    if !state.auth.is_enabled() {
+        let storage = state.storage.as_ref().ok_or(ApiError::Internal)?;
+        if storage.list_users().await.map_err(|_| ApiError::Internal)?.is_empty() {
+            return Ok(html_page(include_str!("bootstrap.html")));
+        }
+    }
     let next = local_next(query.next.as_deref());
     if jar.get(SESSION_COOKIE).and_then(|c| state.sessions.get(c.value())).is_some() {
         return Ok(Redirect::to(next.unwrap_or("/admin")).into_response());
@@ -1009,7 +989,7 @@ fn session_has_access(state: &AppState, jar: &CookieJar, access: Access) -> bool
 }
 
 async fn admin_ui(State(state): State<AppState>, jar: CookieJar) -> Result<Response, ApiError> {
-    if state.auth.is_enabled() && !session_has_access(&state, &jar, Access::Admin) {
+    if !session_has_access(&state, &jar, Access::Admin) {
         return Ok(Redirect::to("/admin/login").into_response());
     }
     Ok(admin_page(&state).await)
@@ -1026,7 +1006,7 @@ async fn logout(
 }
 
 async fn settings_ui(State(state): State<AppState>, jar: CookieJar) -> Result<Response, ApiError> {
-    if state.auth.is_enabled() && !session_has_access(&state, &jar, Access::Admin) {
+    if !session_has_access(&state, &jar, Access::Admin) {
         return Ok(Redirect::to("/admin/login").into_response());
     }
     Ok(html_page(include_str!("settings.html")))
@@ -1034,14 +1014,14 @@ async fn settings_ui(State(state): State<AppState>, jar: CookieJar) -> Result<Re
 
 async fn setup_page(State(state): State<AppState>, jar: CookieJar) -> Result<Response, ApiError> {
     let public = state.settings.read().await.shop.public;
-    if state.auth.is_enabled() && !public && !session_has_access(&state, &jar, Access::Shop) {
+    if !public && !session_has_access(&state, &jar, Access::Shop) {
         return Ok(Redirect::to("/login").into_response());
     }
     Ok(html_page(include_str!("setup.html")))
 }
 
 async fn profile_page(State(state): State<AppState>, jar: CookieJar) -> Result<Response, ApiError> {
-    if state.auth.is_enabled() && !session_has_access(&state, &jar, Access::Backup) {
+    if !session_has_access(&state, &jar, Access::Backup) {
         return Ok(Redirect::to("/login").into_response());
     }
     Ok(html_page(include_str!("profile.html")))
@@ -1472,23 +1452,11 @@ async fn library_scan_post(
     }
     let storage = state.storage.as_ref().ok_or(ApiError::Internal)?;
     let management = state.settings.read().await.library.management.clone();
-    let mut files = Vec::new();
     let requested_path = body.path.clone();
     let selected = body.path.map_or(roots, |path| vec![path]);
-    for root in selected {
-        let mut scanned = scan_library(&root).await.map_err(|_| ApiError::Internal)?;
-        scanned = crate::identifier::identify_files(&root, scanned, &state.keys_path).await;
-        if crate::organizer::organize(&root, &scanned, &management)
-            .await
-            .map_err(|_| ApiError::Internal)?
-        {
-            scanned = scan_library(&root).await.map_err(|_| ApiError::Internal)?;
-            scanned = crate::identifier::identify_files(&root, scanned, &state.keys_path).await;
-        }
-        let persisted =
-            storage.reconcile_library_scan(root, scanned).await.map_err(|_| ApiError::Internal)?;
-        files.extend(persisted);
-    }
+    let files = crate::scan_all_libraries(&selected, storage, &management, &state.keys_path)
+        .await
+        .map_err(|_| ApiError::Internal)?;
     if let Some(path) = requested_path {
         let mut merged = state
             .catalog
@@ -1634,8 +1602,10 @@ async fn user_delete(
     let storage = state.storage.as_ref().ok_or(ApiError::Internal)?;
     let user = storage.get_user(body.user_id).await.map_err(|_| ApiError::Internal)?;
     let deleted = storage.delete_user(body.user_id).await.map_err(|_| ApiError::Internal)?;
-    if let Some(user) = user {
-        state.auth.remove_user(&user.username);
+    if deleted {
+        if let Some(user) = user {
+            state.auth.remove_user(&user.username);
+        }
     }
     Ok(Json(serde_json::json!({ "success": deleted })))
 }
@@ -1657,7 +1627,12 @@ async fn user_signup_post(
     headers: HeaderMap,
     Json(body): Json<SignupRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    ensure_access(&state, &headers, session_token(&jar), Access::Admin).await?;
+    let storage = state.storage.as_ref().ok_or(ApiError::Internal)?;
+    let bootstrap = !state.auth.is_enabled()
+        && storage.list_users().await.map_err(|_| ApiError::Internal)?.is_empty();
+    if !bootstrap {
+        ensure_access(&state, &headers, session_token(&jar), Access::Admin).await?;
+    }
     ensure_same_origin(&headers)?;
     if let Some(error) = validate_username(&body.user) {
         return Ok(Json(serde_json::json!({
@@ -1671,22 +1646,10 @@ async fn user_signup_post(
             "error": format!("Password validation failed: {error}")
         })));
     }
-    let storage = state.storage.as_ref().ok_or(ApiError::Internal)?;
-    if storage
-        .get_user_by_username(body.user.clone())
-        .await
-        .map_err(|_| ApiError::Internal)?
-        .is_some()
-    {
-        return Ok(Json(serde_json::json!({ "success": false, "error": "User already exists" })));
-    }
-    let existing_users = storage.list_users().await.map_err(|_| ApiError::Internal)?;
-    if existing_users.is_empty() && !body.admin_access {
-        return Ok(Json(serde_json::json!({
-            "success": false,
-            "status_code": 400,
-            "location": "/settings"
-        })));
+    if bootstrap && !body.admin_access {
+        return Ok(Json(
+            serde_json::json!({"success": false, "error": "The first account must be an administrator"}),
+        ));
     }
     let roles = if body.admin_access {
         AuthRoles { admin_access: true, shop_access: true, backup_access: true }
@@ -1698,20 +1661,28 @@ async fn user_signup_post(
         }
     };
     let password_hash = hash_password(&body.password).map_err(|_| ApiError::Internal)?;
-    storage
-        .upsert_user(NewUser {
-            username: body.user.clone(),
-            password_hash: password_hash.clone(),
-            can_admin: roles.admin_access,
-            can_upload: roles.backup_access,
-            can_download: roles.shop_access,
-            enabled: true,
-        })
+    let created = storage
+        .create_user(
+            NewUser {
+                username: body.user.clone(),
+                password_hash: password_hash.clone(),
+                can_admin: roles.admin_access,
+                can_upload: roles.backup_access,
+                can_download: roles.shop_access,
+                enabled: true,
+            },
+            bootstrap,
+        )
         .await
         .map_err(|_| ApiError::Internal)?;
+    if !created {
+        return Ok(Json(
+            serde_json::json!({"success": false, "error": "User already exists or initial setup is complete"}),
+        ));
+    }
     state.auth.upsert_hashed_user(body.user, password_hash, roles);
     let mut response = serde_json::json!({ "success": true });
-    if existing_users.is_empty() {
+    if bootstrap {
         response["status_code"] = serde_json::json!(302);
         response["location"] = serde_json::json!("/settings");
     }

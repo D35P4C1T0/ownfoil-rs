@@ -601,9 +601,6 @@ async fn graph_access(
     headers: &HeaderMap,
     jar: &CookieJar,
 ) -> Result<(bool, bool), ApiError> {
-    if !state.auth.is_enabled() {
-        return Ok((true, true));
-    }
     let public = state.settings.read().await.shop.public;
     let username = super::handlers::session_token(jar)
         .and_then(|token| state.sessions.get(token))

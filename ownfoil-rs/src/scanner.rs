@@ -46,7 +46,11 @@ fn scan_library_sync(root: &Path) -> Result<Vec<ContentFile>, ScanError> {
 
     let mut out = Vec::new();
 
-    for entry in WalkDir::new(root).follow_links(false).into_iter().filter_map(Result::ok) {
+    for entry in WalkDir::new(root).follow_links(false) {
+        let entry = entry.map_err(|error| ScanError::Walk {
+            path: error.path().unwrap_or(root).display().to_string(),
+            source: std::io::Error::other(error.to_string()),
+        })?;
         let path = entry.path();
         if !entry.file_type().is_file() {
             continue;
@@ -125,6 +129,39 @@ mod tests {
         assert!(is_supported_content(Path::new("game.xci")));
         assert!(is_supported_content(Path::new("game.nsz")));
         assert!(!is_supported_content(Path::new("game.zip")));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn incomplete_scan_preserves_stored_files() -> Result<()> {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempdir()?;
+        let root = dir.path().join("games");
+        let nested = root.join("nested");
+        fs::create_dir_all(&nested).await?;
+        fs::write(nested.join("game.nsp"), b"content").await?;
+        let storage = crate::storage::Storage::open(dir.path().join("test.db")).await?;
+        let management = crate::settings::LibraryManagementSettings::default();
+        let keys = dir.path().join("absent.keys");
+        let files =
+            crate::scan_all_libraries(std::slice::from_ref(&root), &storage, &management, &keys)
+                .await?;
+        let id = i64::try_from(files[0].id)?;
+        storage.increment_file_download_count(id).await?;
+        fs::set_permissions(&nested, std::fs::Permissions::from_mode(0o000)).await?;
+        let readable = std::fs::read_dir(&nested).is_ok();
+        let result =
+            crate::scan_all_libraries(std::slice::from_ref(&root), &storage, &management, &keys)
+                .await;
+        fs::set_permissions(&nested, std::fs::Permissions::from_mode(0o700)).await?;
+        // Root can still read mode-000 directories.
+        if !readable {
+            assert!(result.is_err());
+            assert_eq!(storage.get_file(id).await?.map(|file| file.download_count), Some(1));
+        }
+        let restored = crate::scan_all_libraries(&[root], &storage, &management, &keys).await?;
+        assert_eq!(restored[0].id, files[0].id);
+        Ok(())
     }
 
     #[tokio::test]

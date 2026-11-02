@@ -30,10 +30,6 @@ pub async fn ensure_access(
     if access == Access::Shop && state.settings.read().await.shop.public {
         return Ok(());
     }
-    if !state.auth.is_enabled() {
-        return Ok(());
-    }
-
     let username = session_token
         .and_then(|token| state.sessions.get(token))
         .or_else(|| {

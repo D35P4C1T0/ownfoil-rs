@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>ownfoil-rs — Create administrator</title><!--theme--></head>
+<body><main class="shell narrow">
+  <header class="login-head"><h1>ownfoil-rs</h1><p>Create your first administrator to finish setup.</p></header>
+  <form id="signup" class="panel login">
+    <fieldset><label for="username">Username</label><input id="username" name="username" required autocomplete="username" autofocus></fieldset>
+    <fieldset><label for="password">Password</label><input id="password" name="password" type="password" required autocomplete="new-password"></fieldset>
+    <button type="submit">Create administrator</button>
+    <p id="error" role="alert"></p>
+  </form>
+</main><script>
+document.querySelector('#signup').onsubmit=async event=>{
+  event.preventDefault();const form=event.currentTarget,button=form.querySelector('button');button.disabled=true;
+  try{
+    const response=await fetch('/api/user/signup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({user:form.username.value,password:form.password.value,admin_access:true})});
+    const data=await response.json();if(!response.ok||!data.success)throw Error(data.error||'Could not create administrator.');
+    location.href='/login';
+  }catch(error){document.querySelector('#error').textContent=error.message;button.disabled=false;}
+};
+</script></body></html>

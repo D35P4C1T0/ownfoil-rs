@@ -20,6 +20,24 @@ mod tests {
 
     use crate::http::{AppState, router, state::SessionStore};
 
+    fn test_settings(auth: &AuthSettings) -> Arc<RwLock<crate::settings::Settings>> {
+        let mut settings = crate::settings::Settings::default();
+        settings.shop.public = !auth.is_enabled();
+        Arc::new(RwLock::new(settings))
+    }
+
+    fn admin_server(state: AppState) -> Result<TestServer> {
+        state.auth.upsert_hashed_user(
+            "test-admin".into(),
+            "unused-session-credential".into(),
+            crate::auth::AuthRoles { admin_access: true, shop_access: true, backup_access: true },
+        );
+        let token = state.sessions.create("test-admin".into());
+        let mut server = TestServer::new(router(state))?;
+        server.add_header("Cookie", format!("ownfoil_session={token}"));
+        Ok(server)
+    }
+
     fn test_app_state(
         catalog: Catalog,
         library_root: PathBuf,
@@ -73,7 +91,7 @@ mod tests {
             library_root,
             storage: None,
             scan_lock: Arc::new(tokio::sync::Mutex::new(())),
-            settings: Arc::new(RwLock::new(crate::settings::Settings::default())),
+            settings: test_settings(&auth),
             settings_path: data_dir.join("settings.yaml"),
             keys_path: data_dir.join("keys.txt"),
             auth: Arc::new(auth),
@@ -101,7 +119,7 @@ mod tests {
             library_root,
             storage: None,
             scan_lock: Arc::new(tokio::sync::Mutex::new(())),
-            settings: Arc::new(RwLock::new(crate::settings::Settings::default())),
+            settings: test_settings(&auth),
             settings_path: data_dir.join("settings.yaml"),
             keys_path: data_dir.join("keys.txt"),
             auth: Arc::new(auth),
@@ -113,6 +131,82 @@ mod tests {
             data_dir,
             titledb_progress_tx: progress_tx,
         }
+    }
+
+    #[tokio::test]
+    async fn downloads_require_catalog_membership_and_exact_paths_and_ids() -> Result<()> {
+        let dir = tempdir()?;
+        for (folder, bytes) in [("A", b"FIRST".as_slice()), ("B", b"SECOND".as_slice())] {
+            fs::create_dir(dir.path().join(folder)).await?;
+            fs::write(dir.path().join(folder).join("demo.nsp"), bytes).await?;
+        }
+        fs::write(dir.path().join("private.txt"), b"PRIVATE").await?;
+        let mut files = crate::scanner::scan_library(dir.path()).await?;
+        for (index, file) in files.iter_mut().enumerate() {
+            file.id = index + 1;
+        }
+        let removed_id = files
+            .iter()
+            .find(|file| file.relative_path == std::path::Path::new("A/demo.nsp"))
+            .unwrap()
+            .id;
+        let state = test_app_state(
+            Catalog::from_files(files),
+            dir.path().into(),
+            AuthSettings::from_users(Vec::new()),
+            SessionStore::new(24),
+        );
+        let server = TestServer::new(router(state.clone()))?;
+        server.get("/api/download/private.txt").await.assert_status_not_found();
+        assert_eq!(server.get("/api/download/A/demo.nsp").await.text(), "FIRST");
+        for (folder, expected) in [("A", "FIRST"), ("B", "SECOND")] {
+            assert_eq!(
+                server
+                    .get(&format!("/{folder}/demo.nsp"))
+                    .add_header("User-Agent", "sphaira/1.0")
+                    .await
+                    .text(),
+                expected
+            );
+        }
+        let files = state
+            .catalog
+            .read()
+            .await
+            .files()
+            .iter()
+            .filter(|file| file.id != removed_id)
+            .cloned()
+            .collect();
+        *state.catalog.write().await = Catalog::from_files(files);
+        server.get(&format!("/api/get_game/{removed_id}")).await.assert_status_not_found();
+        server.get("/api/download/A/demo.nsp").await.assert_status_not_found();
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn rate_limit_replenishes_twenty_requests_per_second() -> Result<()> {
+        use std::net::{Ipv4Addr, SocketAddr};
+        let state = test_app_state(
+            Catalog::from_files(Vec::new()),
+            std::env::temp_dir(),
+            AuthSettings::from_users(Vec::new()),
+            SessionStore::new(24),
+        );
+        let peer = SocketAddr::from((Ipv4Addr::new(192, 0, 2, 1), 1234));
+        let app = router(state).layer(axum::Extension(axum::extract::ConnectInfo(peer)));
+        let server = TestServer::new(app)?;
+        let mut blocked = false;
+        for _ in 0..100 {
+            if server.get("/health").await.status_code() == StatusCode::TOO_MANY_REQUESTS {
+                blocked = true;
+                break;
+            }
+        }
+        assert!(blocked, "The initial burst must be bounded");
+        tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+        server.get("/health").await.assert_status_ok();
+        Ok(())
     }
 
     #[tokio::test]
@@ -151,9 +245,9 @@ mod tests {
             AuthSettings::from_users(Vec::new()),
             SessionStore::new(24),
         );
-        let server = TestServer::new(router(state))?;
+        let mut server = admin_server(state)?;
 
-        for path in ["/admin", "/admin/settings", "/setup", "/profile", "/admin/login"] {
+        for path in ["/admin", "/admin/settings", "/setup", "/profile"] {
             let page = server.get(path).await;
             assert_eq!(page.status_code(), StatusCode::OK, "{path}");
             let html = page.text();
@@ -177,6 +271,10 @@ mod tests {
         assert_eq!(robots.status_code(), StatusCode::OK);
         assert_eq!(robots.text(), "User-agent: *\nDisallow:\n");
         assert_eq!(server.get("/favicon.ico").await.status_code(), StatusCode::NO_CONTENT);
+        server.clear_headers();
+        let login = server.get("/admin/login").await;
+        login.assert_status_ok();
+        assert!(login.text().contains("ownfoil-theme"));
         Ok(())
     }
 
@@ -187,7 +285,7 @@ mod tests {
         fs::write(&file_path, b"0123456789").await?;
 
         let state = test_app_state(
-            Catalog::from_files(Vec::new()),
+            Catalog::from_files(crate::scanner::scan_library(dir.path()).await?),
             dir.path().to_path_buf(),
             AuthSettings::from_users(Vec::new()),
             SessionStore::new(24),
@@ -210,7 +308,7 @@ mod tests {
         fs::write(&file_path, b"0123456789").await?;
 
         let catalog = Catalog::from_files(vec![ContentFile {
-            id: 0,
+            id: 1,
             library_root: PathBuf::new(),
             relative_path: PathBuf::from("demo.nsp"),
             name: String::from("demo.nsp"),
@@ -338,19 +436,54 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn settings_routes_allow_first_admin_setup_when_auth_disabled() -> Result<()> {
-        let state = test_app_state(
+    async fn first_admin_setup_does_not_expose_privileged_routes() -> Result<()> {
+        let dir = tempdir()?;
+        let mut state = test_app_state(
             Catalog::from_files(Vec::new()),
-            std::env::temp_dir(),
+            dir.path().into(),
             AuthSettings::from_users(Vec::new()),
             SessionStore::new(24),
         );
-
-        let server = TestServer::new(router(state))?;
-        let settings = server.get("/api/settings").await;
-        assert_eq!(settings.status_code(), StatusCode::OK);
-        let login = server.get("/admin/login").await;
-        assert_eq!(login.status_code(), StatusCode::OK);
+        state.settings.write().await.shop.public = false;
+        let storage = crate::storage::Storage::open(dir.path().join("test.db")).await?;
+        state.storage = Some(storage.clone());
+        let server = TestServer::new(router(state.clone()))?;
+        for path in ["/api/settings", "/api/users", "/api/catalog"] {
+            server.get(path).await.assert_status_unauthorized();
+        }
+        server
+            .post("/api/graphql")
+            .json(&serde_json::json!({"query":"mutation { purgeFailedTasks }"}))
+            .await
+            .assert_status_unauthorized();
+        state.settings.write().await.shop.public = true;
+        server.get("/api/settings").await.assert_status_unauthorized();
+        let mutation = server
+            .post("/api/graphql")
+            .json(&serde_json::json!({"query":"mutation { purgeFailedTasks }"}))
+            .await
+            .json::<Value>();
+        assert!(mutation["errors"].is_array());
+        state.settings.write().await.shop.public = false;
+        let page = server.get("/login").await;
+        page.assert_status_ok();
+        assert!(page.text().contains("Create administrator"));
+        let signup = serde_json::json!({"user":"first", "password":"secret", "admin_access":true});
+        assert_eq!(
+            server.post("/api/user/signup").json(&signup).await.json::<Value>()["success"],
+            true
+        );
+        server.post("/api/user/signup").json(&signup).await.assert_status_unauthorized();
+        let user = storage.list_users().await?.remove(0);
+        let token = state.sessions.create("first".into());
+        let response = server
+            .delete("/api/user")
+            .add_header("Cookie", format!("ownfoil_session={token}"))
+            .json(&serde_json::json!({"user_id":user.id}))
+            .await;
+        assert_eq!(response.json::<Value>()["success"], false);
+        assert!(state.auth.roles("first").is_some());
+        server.get("/api/settings").await.assert_status_unauthorized();
         Ok(())
     }
 
@@ -902,7 +1035,7 @@ mod tests {
             SessionStore::new(24),
         );
 
-        let server = TestServer::new(router(state))?;
+        let server = admin_server(state)?;
         let response = server.get("/api/saves/list").await;
         assert_eq!(response.status_code(), StatusCode::OK);
 
@@ -1199,7 +1332,7 @@ mod tests {
             SessionStore::new(24),
         );
         state.settings_path = dir.path().join("settings.yaml");
-        let server = TestServer::new(router(state))?;
+        let server = admin_server(state)?;
         let response = server
             .post("/api/settings/library/watcher")
             .json(&serde_json::json!({"enabled":false}))
@@ -1457,7 +1590,7 @@ mod tests {
         );
         let storage = crate::storage::Storage::open(dir.path().join("test.db")).await?;
         state.storage = Some(storage.clone());
-        let server = TestServer::new(router(state))?;
+        let server = admin_server(state)?;
         let request = serde_json::json!({"query":"mutation { enqueueTask(name: \"process_library\") { id status } }"});
         let first = server.post("/api/graphql").json(&request).await.json::<Value>();
         assert!(first.get("errors").is_none(), "{first}");
@@ -1489,7 +1622,7 @@ mod tests {
         original.shop.clients.cyberfoil.enabled = false;
         original.shop.clients.sphaira.enabled = false;
         *state.settings.write().await = original.clone();
-        let server = TestServer::new(router(state.clone()))?;
+        let server = admin_server(state.clone())?;
         let redacted = server.get("/api/settings").await.json::<Value>();
         assert_eq!(redacted["shop"]["clients"]["tinfoil"]["clientCertKey"], "");
         assert_eq!(redacted["shop"]["clients"]["tinfoil"]["hauth"], serde_json::json!({}));
@@ -1537,7 +1670,7 @@ mod tests {
         let persisted = std::fs::read(&state.settings_path)?;
         let motd = state.shop.read().await.motd.clone();
         let encrypt = state.shop.read().await.encrypt;
-        let server = TestServer::new(router(state.clone()))?;
+        let server = admin_server(state.clone())?;
         for patch in [
             serde_json::json!(null),
             serde_json::json!([]),

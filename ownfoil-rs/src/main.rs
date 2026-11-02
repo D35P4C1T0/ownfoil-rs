@@ -327,6 +327,14 @@ async fn scan_all_libraries(
             .reconcile_library_scan(root.clone(), files)
             .await
             .with_context(|| format!("failed to persist library root {}", root.display()))?;
+        if management.delete_older_updates {
+            crate::tasks::enqueue(
+                storage,
+                "remove_outdated_updates",
+                serde_json::json!({"library_path":root}),
+            )
+            .await?;
+        }
         all_files.extend(files);
     }
     Ok(all_files)

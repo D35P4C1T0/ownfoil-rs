@@ -476,6 +476,18 @@ impl Storage {
         .await
     }
 
+    pub async fn create_user(&self, user: NewUser, bootstrap: bool) -> Result<bool> {
+        self.with_connection(move |conn| {
+            // The first-account check and insertion must be one atomic write.
+            conn.execute(
+                "INSERT INTO users(username,password_hash,can_admin,can_upload,can_download,enabled)
+                 SELECT ?1,?2,?3,?4,?5,?6 WHERE ?7=0 OR (?3=1 AND ?6=1 AND NOT EXISTS(SELECT 1 FROM users))
+                 ON CONFLICT(username) DO NOTHING",
+                params![user.username,user.password_hash,user.can_admin,user.can_upload,user.can_download,user.enabled,bootstrap],
+            ).map(|count| count > 0).map_err(StorageError::from)
+        }).await
+    }
+
     pub async fn get_user(&self, id: i64) -> Result<Option<User>> {
         self.with_connection(move |conn| {
             conn.query_row(user_select("WHERE id = ?1").as_str(), params![id], read_user)
@@ -510,7 +522,11 @@ impl Storage {
 
     pub async fn delete_user(&self, id: i64) -> Result<bool> {
         self.with_connection(move |conn| {
-            conn.execute("DELETE FROM users WHERE id = ?1", params![id])
+            conn.execute(
+                "DELETE FROM users WHERE id=?1 AND (can_admin=0 OR enabled=0 OR
+                 EXISTS(SELECT 1 FROM users other WHERE other.id!=?1 AND other.can_admin=1 AND other.enabled=1))",
+                params![id],
+            )
                 .map(|count| count > 0)
                 .map_err(StorageError::from)
         })
@@ -1403,6 +1419,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn account_creation_and_last_admin_deletion_are_atomic() -> Result<()> {
+        let (_dir, storage) = temp_storage().await?;
+        let user = |name: &str| NewUser {
+            username: name.into(),
+            password_hash: "original".into(),
+            can_admin: true,
+            can_upload: true,
+            can_download: true,
+            enabled: true,
+        };
+        let (first, second) = tokio::join!(
+            storage.create_user(user("first"), true),
+            storage.create_user(user("second"), true),
+        );
+        assert_ne!(first?, second?);
+        let existing = storage.list_users().await?.remove(0);
+        let mut duplicate = user(&existing.username);
+        duplicate.password_hash = "replacement".into();
+        assert!(!storage.create_user(duplicate, false).await?);
+        assert_eq!(
+            storage.get_user(existing.id).await?.map(|user| user.password_hash),
+            Some("original".into())
+        );
+        assert!(!storage.delete_user(existing.id).await?);
+        assert!(storage.create_user(user("other"), false).await?);
+        let other = storage.get_user_by_username("other").await?;
+        let other_id =
+            other.map(|user| user.id).ok_or_else(|| std::io::Error::other("missing user"))?;
+        let (first, second) =
+            tokio::join!(storage.delete_user(existing.id), storage.delete_user(other_id));
+        assert_ne!(first?, second?);
+        assert_eq!(storage.list_users().await?.len(), 1);
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn reconciles_scan_with_stable_ids_and_removes_missing_files() -> Result<()> {
         let (_dir, storage) = temp_storage().await?;
         let root = PathBuf::from("/games");
@@ -1588,7 +1640,10 @@ mod tests {
         reopened
             .store_extraction(old, "replacement", "US.en", vec![], Some("corrupt".into()))
             .await?;
-        assert!(reopened.extracted_title_records().await?.is_empty());
+        assert_eq!(
+            reopened.extracted_title_records().await?,
+            Vec::<(String, serde_json::Value)>::new()
+        );
         reopened.store_extraction(old, "empty", "US.en", vec![], None).await?;
         assert!(!reopened.extraction_needed(old, "empty").await?);
         Ok(())

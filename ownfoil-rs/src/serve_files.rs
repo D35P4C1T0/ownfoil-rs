@@ -215,7 +215,13 @@ pub async fn stream_with_range_support(
     headers: &HeaderMap,
     log_context: Option<&DownloadLogContext>,
 ) -> Result<Response, FileServeError> {
-    let path = root.join(requested_path);
+    let root = tokio::fs::canonicalize(root).await?;
+    let path = tokio::fs::canonicalize(root.join(requested_path))
+        .await
+        .map_err(|_| FileServeError::NotFound)?;
+    if !path.starts_with(&root) {
+        return Err(FileServeError::InvalidPath);
+    }
     let metadata = tokio::fs::metadata(&path).await.map_err(|e| {
         warn!(
             path = %requested_path.display(),
@@ -298,6 +304,25 @@ fn parse_range_header(value: &str, file_size: u64) -> Result<ByteRange, FileServ
 #[cfg(test)]
 mod tests {
     use super::sanitize_relative_path;
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn downloads_reject_symlinks_outside_library() -> anyhow::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let root = dir.path().join("games");
+        std::fs::create_dir(&root)?;
+        std::fs::write(dir.path().join("private.txt"), b"private")?;
+        std::os::unix::fs::symlink(dir.path().join("private.txt"), root.join("game.nsp"))?;
+        let result = super::stream_with_range_support(
+            &root,
+            std::path::Path::new("game.nsp"),
+            &axum::http::HeaderMap::new(),
+            None,
+        )
+        .await;
+        assert!(matches!(result, Err(super::FileServeError::InvalidPath)));
+        Ok(())
+    }
 
     #[test]
     fn sanitize_prevents_traversal() {

@@ -110,7 +110,7 @@ mod sphaira_parity_tests {
         )]);
         let scoped = GraphData::load_titles(&state, false, vec!["010000000FFFF000".into()]).await?;
         assert_eq!(scoped.title(&json!("010000000FFFF000"))["name"], "Unowned game");
-        assert!(scoped.apps.is_empty());
+        assert_eq!(scoped.apps, Vec::<Value>::new());
         Ok(())
     }
 

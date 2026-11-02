@@ -1,6 +1,5 @@
 //! Safe template-based library organization.
 
-use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -67,9 +66,6 @@ fn organize_sync(
 ) -> Result<bool, OrganizerError> {
     let mut changed = false;
     changed |= recover_journal(root)?;
-    if settings.delete_older_updates {
-        changed |= delete_old_updates(root, files)?;
-    }
     if !settings.organizer.enabled {
         return Ok(changed);
     }
@@ -244,37 +240,6 @@ fn move_file(source: &Path, destination: &Path) -> Result<(), OrganizerError> {
         }
         Err(error) => Err(io_error(source, error)),
     }
-}
-
-fn delete_old_updates(root: &Path, files: &[ContentFile]) -> Result<bool, OrganizerError> {
-    let mut updates: BTreeMap<String, Vec<&ContentFile>> = BTreeMap::new();
-    for file in files.iter().filter(|file| file.kind == ContentKind::Update) {
-        if let Some(app_id) = &file.title_id {
-            updates.entry(app_id.clone()).or_default().push(file);
-        }
-    }
-    let mut changed = false;
-    let journal_path = root.join(".ownfoil-organizer-journal.json");
-    let trash_dir = root.join(".ownfoil-trash");
-    for versions in updates.values_mut() {
-        versions.sort_by_key(|file| std::cmp::Reverse(file.version.unwrap_or(0)));
-        for old in versions.iter().skip(1) {
-            let path = root.join(&old.relative_path);
-            if path.is_file() {
-                std::fs::create_dir_all(&trash_dir)
-                    .map_err(|source| io_error(&trash_dir, source))?;
-                let trash = trash_dir.join(format!("{}.deleted", uuid::Uuid::new_v4()));
-                let journal = JournalEntry { source: path.clone(), destination: trash.clone() };
-                write_atomic(&journal_path, &serde_json::to_vec_pretty(&journal)?)?;
-                move_file(&path, &trash)?;
-                std::fs::remove_file(&trash).map_err(|source| io_error(&trash, source))?;
-                std::fs::remove_file(&journal_path)
-                    .map_err(|source| io_error(&journal_path, source))?;
-                changed = true;
-            }
-        }
-    }
-    Ok(changed)
 }
 
 fn remove_empty_folders(root: &Path) -> Result<(), OrganizerError> {
