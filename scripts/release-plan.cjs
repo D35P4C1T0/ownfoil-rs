@@ -19,11 +19,15 @@ async function weekly({github, context, core}) {
     return;
   }
   const tag = `weekly-${new Date().toISOString().slice(0, 10).replaceAll('-', '')}`;
+  let reference;
   try {
-    const {data: existing} = await github.rest.repos.getCommit({...repo, ref: tag});
-    if (existing.sha !== context.sha) throw new Error(`${tag} already points to another commit; retry on a later UTC date.`);
+    reference = await github.rest.git.getRef({...repo, ref: `tags/${tag}`});
   } catch (error) {
     if (error.status !== 404) throw error;
+  }
+  if (reference) {
+    const {data: existing} = await github.rest.repos.getCommit({...repo, ref: tag});
+    if (existing.sha !== context.sha) throw new Error(`${tag} already points to another commit; retry on a later UTC date.`);
   }
   core.setOutput('ref', context.sha);
   core.setOutput('tag', tag);

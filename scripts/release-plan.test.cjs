@@ -14,6 +14,11 @@ function fixture(previous, stable = 'v0.4.0', stableCommit = 'stable-sha', exist
         assert.equal(options.status, 'success');
         return {data: {workflow_runs: previous ? [{head_sha: previous}] : []}};
       }},
+      git: {getRef: async ({ref}) => {
+        assert.match(ref, /^tags\/weekly-\d{8}$/);
+        if (!existingWeekly) throw Object.assign(new Error('No weekly tag'), {status: 404});
+        return {data: {object: {type: 'tag', sha: 'annotated-tag-object'}}};
+      }},
       repos: {
         getLatestRelease: async () => {
           if (!stable) throw Object.assign(new Error('No releases'), {status: 404});
@@ -21,7 +26,7 @@ function fixture(previous, stable = 'v0.4.0', stableCommit = 'stable-sha', exist
         },
         getCommit: async ({ref}) => {
           if (ref.startsWith('weekly-')) {
-            if (!existingWeekly) throw Object.assign(new Error('No weekly tag'), {status: 404});
+            if (!existingWeekly) throw Object.assign(new Error(`No commit found for SHA: ${ref}`), {status: 422});
             return {data: {sha: existingWeekly}};
           }
           assert.equal(ref, stable);
@@ -66,6 +71,26 @@ test('failed runs can retry the same commit without moving a dated tag', async (
   assert.equal(retry.output.ref, 'main-sha');
   const collision = fixture('older-successful-sha', 'v0.4.0', 'stable-sha', 'different-sha');
   await assert.rejects(weekly(collision), /already points to another commit/);
+});
+
+test('missing weekly tags do not query the commits endpoint that returns 422', async () => {
+  const run = fixture('older-successful-sha');
+  run.github.rest.repos.getCommit = async () => assert.fail('Missing tag must be checked through getRef');
+  await weekly(run);
+  assert.equal(run.output.ref, 'main-sha');
+});
+
+test('tag lookup and existing-tag resolution errors stop publishing', async () => {
+  const forbidden = fixture('older-successful-sha');
+  forbidden.github.rest.git.getRef = async () => {
+    throw Object.assign(new Error('Forbidden'), {status: 403});
+  };
+  await assert.rejects(weekly(forbidden), /Forbidden/);
+  const invalid = fixture('older-successful-sha', 'v0.4.0', 'stable-sha', 'main-sha');
+  invalid.github.rest.repos.getCommit = async () => {
+    throw Object.assign(new Error('Invalid existing commit'), {status: 422});
+  };
+  await assert.rejects(weekly(invalid), /Invalid existing commit/);
 });
 
 test('API failures stop publishing rather than pretending no release exists', async () => {
